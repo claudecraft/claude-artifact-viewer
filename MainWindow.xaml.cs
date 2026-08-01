@@ -23,7 +23,8 @@ public partial class MainWindow : Window
     private static readonly string[] SupportedExtensions =
     {
         ".md", ".markdown", ".html", ".htm", ".pdf", ".svg",
-        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".json"
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".json",
+        ".docx", ".xlsx"
     };
 
     private static readonly MarkdownPipeline MarkdownPipeline =
@@ -517,6 +518,16 @@ public partial class MainWindow : Window
             await File.WriteAllTextAsync(rendered, BuildMarkdownHtml(text));
             Web.CoreWebView2.Navigate($"https://{RenderHost}/current.html?v={entry.LastWrite.Ticks}");
         }
+        else if (ext is ".docx" or ".xlsx")
+        {
+            // Copied beside the render page so the fetch is same-origin
+            // (cross-virtual-host fetches are blocked by CORS)
+            var cached = System.IO.Path.Combine(_renderDir, "current" + ext);
+            if (!await CopyWithRetry(entry.Path, cached)) return;
+            var page = System.IO.Path.Combine(_renderDir, "office.html");
+            await File.WriteAllTextAsync(page, BuildOfficeHtml(ext, entry.LastWrite.Ticks));
+            Web.CoreWebView2.Navigate($"https://{RenderHost}/office.html?v={entry.LastWrite.Ticks}");
+        }
         else
         {
             // Served through the virtual host so Chromium handles it natively
@@ -524,6 +535,78 @@ public partial class MainWindow : Window
             Web.CoreWebView2.Navigate($"https://{VirtualHost}/{Uri.EscapeDataString(entry.Name)}");
         }
     }
+
+    private static async Task<bool> CopyWithRetry(string src, string dst)
+    {
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            try
+            {
+                using var source = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var dest = new FileStream(dst, FileMode.Create, FileAccess.Write);
+                await source.CopyToAsync(dest);
+                return true;
+            }
+            catch (IOException)
+            {
+                await Task.Delay(250);
+            }
+        }
+        return false;
+    }
+
+    private static string BuildOfficeHtml(string ext, long ticks) => ext == ".docx"
+        ? $$"""
+            <!doctype html><html><head><meta charset="utf-8"><style>
+              body { margin: 0; background: #1E1E1E; }
+              #doc { padding: 24px 0; }
+              #doc .docx-wrapper { background: transparent; padding: 0; }
+              #doc .docx-wrapper > section.docx { margin: 0 auto 16px; box-shadow: 0 2px 12px rgba(0,0,0,.5); }
+              .err { color: #d4d4d4; font: 14px system-ui; padding: 40px; text-align: center; }
+            </style></head><body>
+            <div id="doc"></div>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.5/dist/docx-preview.min.js"></script>
+            <script>
+              fetch('current.docx?v={{ticks}}').then(r => r.arrayBuffer())
+                .then(buf => docx.renderAsync(buf, document.getElementById('doc')))
+                .catch(e => document.getElementById('doc').innerHTML =
+                  '<div class="err">Could not render document: ' + e + '<br>(docx rendering needs internet for CDN libraries)</div>');
+            </script></body></html>
+            """
+        : $$"""
+            <!doctype html><html><head><meta charset="utf-8"><style>
+              body { margin: 0; background: #1E1E1E; color: #d4d4d4; font: 13px system-ui, sans-serif; }
+              #tabs { display: flex; gap: 2px; padding: 8px 8px 0; position: sticky; top: 0; background: #1E1E1E; }
+              #tabs button { background: #2d2d2d; color: #d4d4d4; border: 0; padding: 6px 14px;
+                             cursor: pointer; border-radius: 4px 4px 0 0; font: inherit; }
+              #tabs button.active { background: #3d3d3d; color: #fff; }
+              #sheet { padding: 12px; overflow: auto; }
+              table { border-collapse: collapse; }
+              td, th { border: 1px solid #3d3d3d; padding: 4px 10px; white-space: nowrap; }
+              tr:first-child td { background: #2d2d2d; font-weight: 600; }
+              .err { padding: 40px; text-align: center; }
+            </style></head><body>
+            <div id="tabs"></div><div id="sheet"></div>
+            <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+            <script>
+              fetch('current.xlsx?v={{ticks}}').then(r => r.arrayBuffer()).then(buf => {
+                const wb = XLSX.read(buf);
+                const tabs = document.getElementById('tabs');
+                const show = name => {
+                  document.getElementById('sheet').innerHTML = XLSX.utils.sheet_to_html(wb.Sheets[name]);
+                  [...tabs.children].forEach(b => b.classList.toggle('active', b.textContent === name));
+                };
+                wb.SheetNames.forEach(name => {
+                  const b = document.createElement('button');
+                  b.textContent = name; b.onclick = () => show(name);
+                  tabs.appendChild(b);
+                });
+                show(wb.SheetNames[0]);
+              }).catch(e => document.getElementById('sheet').innerHTML =
+                '<div class="err">Could not render spreadsheet: ' + e + '<br>(xlsx rendering needs internet for CDN libraries)</div>');
+            </script></body></html>
+            """;
 
     private static async Task<string?> ReadTextWithRetry(string path)
     {

@@ -17,7 +17,9 @@ table to terminal scrollback.
   retries on locked files)
 - **Renders** markdown (GitHub-style via Markdig, syntax-highlighted code
   blocks, ```mermaid diagrams), HTML (full Chromium, JS included), PDF, SVG,
-  images, txt, json
+  images, txt, json — plus **Word (.docx) and Excel (.xlsx)** via
+  docx-preview/SheetJS (CDN-based, no Office install needed; multi-sheet
+  workbooks get sheet tabs)
 - **Tabs** — one per file, ordered oldest → newest; hover for a ✕ that hides
   the tab without touching the file. Closed state persists across restarts;
   a closed file reopens automatically if it's rewritten.

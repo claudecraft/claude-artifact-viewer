@@ -38,6 +38,8 @@ no other action needed. If the app isn't running, launch it first:
   Prefer this for dashboards, charts, and interactive content. Dark background
   suggested (the viewer chrome is dark).
 - **PDF, SVG, PNG/JPG/GIF/WebP, txt, json** — rendered natively.
+- **Word (`.docx`) / Excel (`.xlsx`)** — rendered via CDN libraries (needs
+  internet). Fine for viewing dropped files; prefer md/html for what you author.
 
 **Seeing what I see:** the viewer writes the path of the currently displayed
 file to `%LOCALAPPDATA%\ArtifactViewer\current.txt`. When I say "look at the

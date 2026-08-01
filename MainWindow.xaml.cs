@@ -288,6 +288,46 @@ public partial class MainWindow : Window
         catch (Exception) { /* non-fatal: "look at current doc" just won't resolve */ }
     }
 
+    // ---------- Keep (promote to a durable folder) ----------
+
+    private bool PickKeepDir()
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Choose your keep folder (where kept artifacts are copied)" };
+        if (dlg.ShowDialog(this) != true) return false;
+        SaveSetting("keepDir", dlg.FolderName);
+        return true;
+    }
+
+    private void BtnKeep_Click(object sender, RoutedEventArgs e)
+    {
+        if (_renderedPath is null || !File.Exists(_renderedPath)) return;
+        var keepDir = LoadSetting("keepDir");
+        if (keepDir is null || !Directory.Exists(keepDir))
+        {
+            if (!PickKeepDir()) return;
+            keepDir = LoadSetting("keepDir")!;
+        }
+
+        // Never overwrite in the keep folder — it's a store, not a scratchpad
+        var name = System.IO.Path.GetFileNameWithoutExtension(_renderedPath);
+        var ext = System.IO.Path.GetExtension(_renderedPath);
+        var dst = System.IO.Path.Combine(keepDir, name + ext);
+        for (var n = 2; File.Exists(dst); n++)
+            dst = System.IO.Path.Combine(keepDir, $"{name} ({n}){ext}");
+
+        try
+        {
+            File.Copy(_renderedPath, dst);
+            TxtDate.Text = $"kept → {System.IO.Path.GetFileName(dst)}";
+        }
+        catch (Exception ex)
+        {
+            TxtDate.Text = $"keep failed: {ex.Message}";
+        }
+    }
+
+    private void BtnKeep_RightClick(object sender, MouseButtonEventArgs e) => PickKeepDir();
+
     // ---------- Drag & drop ----------
 
     private void Window_DragOver(object sender, DragEventArgs e)

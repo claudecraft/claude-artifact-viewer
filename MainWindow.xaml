@@ -119,6 +119,10 @@
                     Content="&#x1F4C1;" Margin="0,4,2,4" Click="BtnFolder_Click"
                     MouseRightButtonUp="BtnFolder_RightClick"
                     ToolTip="Open watched folder (right-click to change it)"/>
+            <Button x:Name="BtnKeep" DockPanel.Dock="Right" Style="{StaticResource NavButton}"
+                    Content="&#x1F4E5;" Margin="0,4,2,4" Click="BtnKeep_Click"
+                    MouseRightButtonUp="BtnKeep_RightClick"
+                    ToolTip="Keep: copy this file to your keep folder (right-click to change it)"/>
             <TextBlock x:Name="TxtCounter" DockPanel.Dock="Right" Foreground="#8A8A8A"
                        VerticalAlignment="Center" Margin="0,0,12,0" FontSize="12" Text=""/>
 

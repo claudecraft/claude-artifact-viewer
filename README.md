@@ -32,6 +32,10 @@ table to terminal scrollback.
   and click to reopen; hover a row for a 🗑 that deletes the file (to the
   Recycle Bin)
 - **📌 always-on-top** pin, **📁** opens the watched folder
+- **📥 Keep** — copies the current file to a configured "keep folder"
+  (right-click to set it). The watch folder is a scratchpad; Keep is the
+  one-way valve to your durable store (an Obsidian vault inbox, a project
+  docs folder, wherever). Never overwrites — collisions get a numbered suffix.
 - **Drag & drop** — drop files anywhere on the window to copy them into the
   watched folder and display them (name collision = overwrite, i.e. update)
 - **Claude can see what you see** — the viewer writes the currently displayed

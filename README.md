@@ -27,6 +27,12 @@ table to terminal scrollback.
   and click to reopen; hover a row for a 🗑 that deletes the file (to the
   Recycle Bin)
 - **📌 always-on-top** pin, **📁** opens the watched folder
+- **Drag & drop** — drop files anywhere on the window to copy them into the
+  watched folder and display them (name collision = overwrite, i.e. update)
+- **Claude can see what you see** — the viewer writes the currently displayed
+  file's path to `%LOCALAPPDATA%\ArtifactViewer\current.txt`, so telling Claude
+  Code "look at the current doc" just works (the included
+  [CLAUDE-PROMPT.md](CLAUDE-PROMPT.md) teaches it the convention)
 - **Live reload** — editing the shown file re-renders it; a new file
   auto-displays only if you're already viewing the latest (browsing history
   never gets interrupted)

@@ -39,6 +39,11 @@ no other action needed. If the app isn't running, launch it first:
   suggested (the viewer chrome is dark).
 - **PDF, SVG, PNG/JPG/GIF/WebP, txt, json** — rendered natively.
 
+**Seeing what I see:** the viewer writes the path of the currently displayed
+file to `%LOCALAPPDATA%\ArtifactViewer\current.txt`. When I say "look at the
+current doc", "the one I'm viewing", or similar — read that file to get the
+path, then read the file it points to.
+
 **Conventions:**
 - Use short, descriptive kebab-case filenames (`db-schema-diagram.md`,
   `perf-report.html`) — the filename is the tab title in the viewer.

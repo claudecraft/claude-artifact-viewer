@@ -5,7 +5,10 @@
         Title="Artifact Viewer"
         Width="1000" Height="750"
         Background="#1E1E1E"
-        PreviewKeyDown="Window_PreviewKeyDown">
+        PreviewKeyDown="Window_PreviewKeyDown"
+        AllowDrop="True"
+        DragOver="Window_DragOver"
+        Drop="Window_Drop">
 
     <Window.Resources>
         <!-- Flat dark toolbar button -->

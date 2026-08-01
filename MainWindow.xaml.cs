@@ -154,6 +154,8 @@ public partial class MainWindow : Window
             RenderHost, _renderDir, CoreWebView2HostResourceAccessKind.Allow);
         Web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
         Web.CoreWebView2.Settings.IsStatusBarEnabled = false;
+        // Let file drops over the web content bubble up to the window handlers
+        Web.AllowExternalDrop = false;
 
         _webReady = true;
 
@@ -249,6 +251,64 @@ public partial class MainWindow : Window
             _ = ShowEntry(target);
 
         UpdateNavButtons();
+    }
+
+    // ---------- Current-doc state (lets Claude Code "see" what's on screen) ----------
+
+    private void WriteCurrentDocState(string path)
+    {
+        try
+        {
+            File.WriteAllText(System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ArtifactViewer", "current.txt"), path);
+        }
+        catch (Exception) { /* non-fatal: "look at current doc" just won't resolve */ }
+    }
+
+    // ---------- Drag & drop ----------
+
+    private void Window_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] dropped) return;
+
+        string? lastAdded = null;
+        foreach (var src in dropped)
+        {
+            if (!File.Exists(src)) continue; // skips directories too
+            if (!SupportedExtensions.Contains(System.IO.Path.GetExtension(src).ToLowerInvariant())) continue;
+
+            var dst = System.IO.Path.Combine(_watchDir, System.IO.Path.GetFileName(src));
+            if (string.Equals(System.IO.Path.GetFullPath(src), System.IO.Path.GetFullPath(dst),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                lastAdded = dst; // already in the watch folder — just show it
+                continue;
+            }
+
+            try
+            {
+                File.Copy(src, dst, overwrite: true);
+                // Copy preserves the source timestamp; bump it so the file sorts newest
+                File.SetLastWriteTime(dst, DateTime.Now);
+                lastAdded = dst;
+            }
+            catch (Exception) { /* locked/unreadable source — skip it */ }
+        }
+
+        if (lastAdded is null) return;
+        Rescan(selectLatest: false);
+        var entry = _files.FirstOrDefault(f =>
+            string.Equals(f.Path, lastAdded, StringComparison.OrdinalIgnoreCase));
+        if (entry is not null) TabStrip.SelectedItem = entry;
     }
 
     // ---------- Navigation ----------
@@ -420,6 +480,7 @@ public partial class MainWindow : Window
         Title = $"{entry.Name} — Artifact Viewer";
         _renderedPath = entry.Path;
         _renderedWrite = entry.LastWrite;
+        WriteCurrentDocState(entry.Path);
 
         var ext = System.IO.Path.GetExtension(entry.Path).ToLowerInvariant();
         if (ext is ".md" or ".markdown")

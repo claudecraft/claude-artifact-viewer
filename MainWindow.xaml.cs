@@ -154,8 +154,21 @@ public partial class MainWindow : Window
             RenderHost, _renderDir, CoreWebView2HostResourceAccessKind.Allow);
         Web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
         Web.CoreWebView2.Settings.IsStatusBarEnabled = false;
-        // Let file drops over the web content bubble up to the window handlers
-        Web.AllowExternalDrop = false;
+
+        // Drops over the web content can't reach the WPF handlers (separate HWND),
+        // so catch them in the page and post the file paths back to the host
+        await Web.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("""
+            window.addEventListener('dragover', e => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+            }, true);
+            window.addEventListener('drop', e => {
+                e.preventDefault();
+                if (e.dataTransfer?.files?.length)
+                    chrome.webview.postMessageWithAdditionalObjects('files-dropped', e.dataTransfer.files);
+            }, true);
+            """);
+        Web.CoreWebView2.WebMessageReceived += Web_WebMessageReceived;
 
         _webReady = true;
 
@@ -278,8 +291,19 @@ public partial class MainWindow : Window
 
     private void Window_Drop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] dropped) return;
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] dropped) ImportFiles(dropped);
+    }
 
+    private void Web_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        try { if (e.TryGetWebMessageAsString() != "files-dropped") return; }
+        catch (Exception) { return; } // non-string message from page content
+        var paths = e.AdditionalObjects?.OfType<CoreWebView2File>().Select(f => f.Path).ToArray();
+        if (paths is { Length: > 0 }) ImportFiles(paths);
+    }
+
+    private void ImportFiles(string[] dropped)
+    {
         string? lastAdded = null;
         foreach (var src in dropped)
         {

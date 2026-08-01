@@ -31,9 +31,11 @@ table to terminal scrollback.
   auto-displays only if you're already viewing the latest (browsing history
   never gets interrupted)
 
+![Sidebar with a greyed closed doc and the hover delete button](docs/examples/sidebar.png)
+
 ## Getting started
 
-Requirements: Windows 10/11, [.NET 9 SDK](https://dotnet.microsoft.com/download)
+Requirements: Windows 10/11, [.NET 10 SDK](https://dotnet.microsoft.com/download)
 (or Desktop Runtime to run a published build), WebView2 runtime (preinstalled
 on Windows 11).
 
@@ -67,6 +69,8 @@ The pattern is always the same: you talk to Claude Code in the terminal, it
 writes a file into the watched folder, and the viewer renders it instantly.
 (These assume the [CLAUDE-PROMPT.md](CLAUDE-PROMPT.md) section is installed.)
 
+![Claude Code on the left, the rendered analysis in the viewer on the right](docs/examples/hero-splitscreen.png)
+
 **A long analysis that would drown in scrollback**
 
 > "Compare the three caching strategies we discussed and recommend one."
@@ -75,12 +79,16 @@ Claude writes `caching-comparison.md` — full tables, trade-offs, code samples 
 and the terminal gets a two-line summary plus *"full analysis in the viewer:
 caching-comparison.md"*. Nothing lost to scrollback.
 
+![Analysis rendered in the viewer](docs/examples/example-analysis.png)
+
 **An interactive dashboard**
 
 > "Show me the test-suite timings from this run as a dashboard."
 
 Claude writes `test-timings.html`; it opens as a new tab with a real chart —
 full Chromium, so JavaScript and CDN chart libraries just work.
+
+![Dashboard rendered in the viewer](docs/examples/example-dashboard.png)
 
 **Architecture diagrams**
 
@@ -89,6 +97,8 @@ full Chromium, so JavaScript and CDN chart libraries just work.
 Claude writes `request-flow.md` with a ```mermaid fence — rendered as an
 actual diagram, not ASCII art in the terminal.
 
+![Mermaid diagram rendered in the viewer](docs/examples/example-diagram.png)
+
 **Iterating on one deliverable**
 
 > "Good, but move the auth section up and add a risks table."
@@ -96,11 +106,15 @@ actual diagram, not ASCII art in the terminal.
 Claude overwrites `caching-comparison.md` and the open tab live-updates in
 place. One deliverable, one tab, however many revisions.
 
+![The same tab after a live update, now showing Rev 2](docs/examples/example-live-update.png)
+
 **No Claude required**
 
 The viewer renders anything that lands in the folder from any source — save a
 PDF from your browser there, `curl -o` an API response, drop in a screenshot.
 If it appears in the folder, it gets a tab.
+
+![A raw JSON file rendered natively](docs/examples/example-any-file.png)
 
 ## Implementation notes
 

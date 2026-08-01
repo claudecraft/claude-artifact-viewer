@@ -27,7 +27,7 @@ same file so the viewer live-updates.
 `%LOCALAPPDATA%\ArtifactViewer\settings.json` for the configured location
 (create the folder if it doesn't exist). The viewer picks it up automatically —
 no other action needed. If the app isn't running, launch it first:
-`<clone folder>\bin\Debug\net9.0-windows\ArtifactViewer.exe`
+`<clone folder>\bin\Debug\net10.0-windows\ArtifactViewer.exe`
 (build with `dotnet build` from the clone folder if the exe is missing).
 
 **Supported formats:**

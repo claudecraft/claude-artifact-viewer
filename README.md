@@ -61,6 +61,47 @@ your `~/.claude/CLAUDE.md`. It tells Claude Code to write visual deliverables
 and long analyses into the watched folder (with a short terminal summary
 pointing at them) instead of dumping everything into scrollback.
 
+## Usage examples
+
+The pattern is always the same: you talk to Claude Code in the terminal, it
+writes a file into the watched folder, and the viewer renders it instantly.
+(These assume the [CLAUDE-PROMPT.md](CLAUDE-PROMPT.md) section is installed.)
+
+**A long analysis that would drown in scrollback**
+
+> "Compare the three caching strategies we discussed and recommend one."
+
+Claude writes `caching-comparison.md` — full tables, trade-offs, code samples —
+and the terminal gets a two-line summary plus *"full analysis in the viewer:
+caching-comparison.md"*. Nothing lost to scrollback.
+
+**An interactive dashboard**
+
+> "Show me the test-suite timings from this run as a dashboard."
+
+Claude writes `test-timings.html`; it opens as a new tab with a real chart —
+full Chromium, so JavaScript and CDN chart libraries just work.
+
+**Architecture diagrams**
+
+> "Draw the request flow of this service as a diagram."
+
+Claude writes `request-flow.md` with a ```mermaid fence — rendered as an
+actual diagram, not ASCII art in the terminal.
+
+**Iterating on one deliverable**
+
+> "Good, but move the auth section up and add a risks table."
+
+Claude overwrites `caching-comparison.md` and the open tab live-updates in
+place. One deliverable, one tab, however many revisions.
+
+**No Claude required**
+
+The viewer renders anything that lands in the folder from any source — save a
+PDF from your browser there, `curl -o` an API response, drop in a screenshot.
+If it appears in the folder, it gets a tab.
+
 ## Implementation notes
 
 - Non-markdown files are served through a WebView2 virtual host mapped to the

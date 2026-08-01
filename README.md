@@ -38,7 +38,7 @@ Requirements: Windows 10/11, [.NET 9 SDK](https://dotnet.microsoft.com/download)
 on Windows 11).
 
 ```
-git clone https://github.com/YOUR_ACCOUNT/claude-artifact-viewer
+git clone https://github.com/claudecraft/claude-artifact-viewer
 cd claude-artifact-viewer
 dotnet run
 ```

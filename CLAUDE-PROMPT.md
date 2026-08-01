@@ -23,11 +23,12 @@ viewer: <filename>"). If the analysis evolves during the session, overwrite the
 same file so the viewer live-updates.
 
 **How to use it:** simply write the file to the watched folder:
-`%USERPROFILE%\OneDrive\Documents\claude_artifacts` (create the folder if it
-doesn't exist). The viewer picks it up automatically — no other action needed.
-If the app isn't running, launch it first:
-`%USERPROFILE%\OneDrive\Desktop\ArtifactViewer\bin\Debug\net9.0-windows\ArtifactViewer.exe`
-(build with `dotnet build` from the ArtifactViewer folder if the exe is missing).
+`%USERPROFILE%\Documents\claude_artifacts` by default — check
+`%LOCALAPPDATA%\ArtifactViewer\settings.json` for the configured location
+(create the folder if it doesn't exist). The viewer picks it up automatically —
+no other action needed. If the app isn't running, launch it first:
+`<clone folder>\bin\Debug\net9.0-windows\ArtifactViewer.exe`
+(build with `dotnet build` from the clone folder if the exe is missing).
 
 **Supported formats:**
 - **Markdown** (`.md`) — GitHub-style rendering with syntax-highlighted code

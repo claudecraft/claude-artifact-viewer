@@ -113,7 +113,9 @@
                           Content="&#x1F4CC;" Margin="0,4,6,4" ToolTip="Always on top"
                           Checked="BtnPin_Changed" Unchecked="BtnPin_Changed"/>
             <Button x:Name="BtnFolder" DockPanel.Dock="Right" Style="{StaticResource NavButton}"
-                    Content="&#x1F4C1;" Margin="0,4,2,4" Click="BtnFolder_Click" ToolTip="Open watched folder"/>
+                    Content="&#x1F4C1;" Margin="0,4,2,4" Click="BtnFolder_Click"
+                    MouseRightButtonUp="BtnFolder_RightClick"
+                    ToolTip="Open watched folder (right-click to change it)"/>
             <TextBlock x:Name="TxtCounter" DockPanel.Dock="Right" Foreground="#8A8A8A"
                        VerticalAlignment="Center" Margin="0,0,12,0" FontSize="12" Text=""/>
 

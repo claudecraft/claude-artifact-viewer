@@ -29,8 +29,9 @@ public partial class MainWindow : Window
     private static readonly MarkdownPipeline MarkdownPipeline =
         new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
 
-    private readonly string _watchDir;
+    private string _watchDir;
     private readonly string _renderDir;
+    private readonly string _settingsPath;
     private readonly ObservableCollection<FileEntry> _files = new();
     private readonly ObservableCollection<SidebarItem> _allFiles = new();
     private List<FileEntry> _scanned = new();
@@ -38,6 +39,59 @@ public partial class MainWindow : Window
     private DispatcherTimer? _debounce;
     private readonly Dictionary<string, DateTime> _closed = new(StringComparer.OrdinalIgnoreCase);
     private string _closedStatePath = "";
+
+    private string ResolveWatchDir(string[] args)
+    {
+        // Command-line arg is a per-launch override and is not persisted
+        if (args.Length > 1) return System.IO.Path.GetFullPath(args[1]);
+
+        var configured = LoadSetting("watchDir");
+        if (configured is not null)
+        {
+            if (Directory.Exists(configured)) return configured;
+
+            var dlg = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = $"Watched folder not found ({configured}) — choose a folder to watch"
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                SaveSetting("watchDir", dlg.FolderName);
+                return dlg.FolderName;
+            }
+        }
+
+        var fallback = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "claude_artifacts");
+        SaveSetting("watchDir", fallback);
+        return fallback;
+    }
+
+    private string? LoadSetting(string key)
+    {
+        try
+        {
+            if (!File.Exists(_settingsPath)) return null;
+            var settings = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(_settingsPath));
+            return settings is not null && settings.TryGetValue(key, out var value) ? value : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    private void SaveSetting(string key, string value)
+    {
+        try
+        {
+            Dictionary<string, string>? settings = null;
+            if (File.Exists(_settingsPath))
+                settings = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(_settingsPath));
+            settings ??= new Dictionary<string, string>();
+            settings[key] = value;
+            File.WriteAllText(_settingsPath, JsonSerializer.Serialize(settings,
+                new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception) { /* non-fatal: setting just won't persist */ }
+    }
 
     private void LoadClosed()
     {
@@ -67,14 +121,15 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        var args = Environment.GetCommandLineArgs();
-        _watchDir = args.Length > 1
-            ? System.IO.Path.GetFullPath(args[1])
-            : System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "claude_artifacts");
+        var appDataDir = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ArtifactViewer");
+        Directory.CreateDirectory(appDataDir);
+        _settingsPath = System.IO.Path.Combine(appDataDir, "settings.json");
+
+        _watchDir = ResolveWatchDir(Environment.GetCommandLineArgs());
         Directory.CreateDirectory(_watchDir);
 
-        _renderDir = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ArtifactViewer", "render");
+        _renderDir = System.IO.Path.Combine(appDataDir, "render");
         Directory.CreateDirectory(_renderDir);
 
         _closedStatePath = System.IO.Path.Combine(
@@ -329,6 +384,30 @@ public partial class MainWindow : Window
 
     private void BtnFolder_Click(object sender, RoutedEventArgs e) =>
         Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_watchDir}\"") { UseShellExecute = true });
+
+    private void BtnFolder_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Choose folder to watch",
+            InitialDirectory = _watchDir
+        };
+        if (dlg.ShowDialog(this) != true || string.Equals(dlg.FolderName, _watchDir, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _watchDir = dlg.FolderName;
+        Directory.CreateDirectory(_watchDir);
+        SaveSetting("watchDir", _watchDir);
+
+        if (_watcher is not null) _watcher.Path = _watchDir;
+        if (_webReady)
+        {
+            Web.CoreWebView2.ClearVirtualHostNameToFolderMapping(VirtualHost);
+            Web.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                VirtualHost, _watchDir, CoreWebView2HostResourceAccessKind.Allow);
+        }
+        Rescan(selectLatest: true);
+    }
 
     // ---------- Rendering ----------
 

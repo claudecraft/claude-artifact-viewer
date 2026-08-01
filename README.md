@@ -44,7 +44,11 @@ dotnet run
 ```
 
 By default it watches `Documents\claude_artifacts` (created automatically).
-Pass any folder as an argument to watch something else:
+The watched folder is a setting: **right-click the 📁 button** to change it
+(persisted in `%LOCALAPPDATA%\ArtifactViewer\settings.json`). If the configured
+folder no longer exists at startup, a folder picker appears (cancel falls back
+to the default). A command-line argument overrides the setting for that launch
+without persisting:
 
 ```
 ArtifactViewer.exe C:\some\folder

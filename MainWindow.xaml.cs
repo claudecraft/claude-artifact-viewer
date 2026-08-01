@@ -20,12 +20,20 @@ public partial class MainWindow : Window
     private const string VirtualHost = "artifacts.viewer";
     private const string RenderHost = "render.viewer";
 
-    private static readonly string[] SupportedExtensions =
+    private static readonly string[] CodeExtensions =
+    {
+        ".py", ".js", ".ts", ".jsx", ".tsx", ".cs", ".sql", ".yaml", ".yml",
+        ".toml", ".xml", ".log", ".ps1", ".sh", ".bat", ".cmd", ".c", ".cpp",
+        ".h", ".java", ".rb", ".go", ".rs", ".php", ".css", ".ini", ".cfg", ".conf"
+    };
+
+    private static readonly string[] SupportedExtensions = new[]
     {
         ".md", ".markdown", ".html", ".htm", ".pdf", ".svg",
-        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".json",
-        ".docx", ".xlsx"
-    };
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif",
+        ".txt", ".json", ".docx", ".xlsx", ".csv", ".tsv",
+        ".mp4", ".webm", ".mp3", ".wav"
+    }.Concat(CodeExtensions).ToArray();
 
     private static readonly MarkdownPipeline MarkdownPipeline =
         new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
@@ -528,12 +536,81 @@ public partial class MainWindow : Window
             await File.WriteAllTextAsync(page, BuildOfficeHtml(ext, entry.LastWrite.Ticks));
             Web.CoreWebView2.Navigate($"https://{RenderHost}/office.html?v={entry.LastWrite.Ticks}");
         }
+        else if (ext is ".csv" or ".tsv")
+        {
+            var cached = System.IO.Path.Combine(_renderDir, "current" + ext);
+            if (!await CopyWithRetry(entry.Path, cached)) return;
+            var page = System.IO.Path.Combine(_renderDir, "csv.html");
+            await File.WriteAllTextAsync(page, BuildCsvHtml(ext, entry.LastWrite.Ticks));
+            Web.CoreWebView2.Navigate($"https://{RenderHost}/csv.html?v={entry.LastWrite.Ticks}");
+        }
+        else if (CodeExtensions.Contains(ext))
+        {
+            var text = await ReadTextWithRetry(entry.Path);
+            if (text is null) return;
+            var page = System.IO.Path.Combine(_renderDir, "code.html");
+            await File.WriteAllTextAsync(page, BuildCodeHtml(ext, text));
+            Web.CoreWebView2.Navigate($"https://{RenderHost}/code.html?v={entry.LastWrite.Ticks}");
+        }
         else
         {
             // Served through the virtual host so Chromium handles it natively
-            // (PDF viewer, images, HTML with relative asset paths, etc.)
+            // (PDF viewer, images, media playback, HTML with relative asset paths, etc.)
             Web.CoreWebView2.Navigate($"https://{VirtualHost}/{Uri.EscapeDataString(entry.Name)}");
         }
+    }
+
+    private static string BuildCsvHtml(string ext, long ticks) => $$"""
+        <!doctype html><html><head><meta charset="utf-8"><style>
+          body { margin: 0; background: #1E1E1E; color: #d4d4d4; font: 13px system-ui, sans-serif; }
+          #sheet { padding: 12px; overflow: auto; }
+          table { border-collapse: collapse; }
+          td, th { border: 1px solid #3d3d3d; padding: 4px 10px; white-space: nowrap; }
+          tr:first-child td { background: #2d2d2d; font-weight: 600; position: sticky; top: 0; }
+          .err { padding: 40px; text-align: center; }
+        </style></head><body>
+        <div id="sheet"></div>
+        <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+        <script>
+          fetch('current{{ext}}?v={{ticks}}').then(r => r.text()).then(text => {
+            const wb = XLSX.read(text, { type: 'string', FS: '{{(ext == ".tsv" ? "\\t" : ",")}}' });
+            document.getElementById('sheet').innerHTML =
+              XLSX.utils.sheet_to_html(wb.Sheets[wb.SheetNames[0]]);
+          }).catch(e => document.getElementById('sheet').innerHTML =
+            '<div class="err">Could not render file: ' + e + '<br>(csv rendering needs internet for CDN libraries)</div>');
+        </script></body></html>
+        """;
+
+    private static readonly Dictionary<string, string> HljsLanguage = new()
+    {
+        [".py"] = "python", [".ps1"] = "powershell", [".yml"] = "yaml",
+        [".cs"] = "csharp", [".rs"] = "rust", [".sh"] = "bash",
+        [".bat"] = "dos", [".cmd"] = "dos", [".h"] = "cpp", [".rb"] = "ruby",
+        [".jsx"] = "javascript", [".ts"] = "typescript", [".tsx"] = "typescript",
+        [".toml"] = "ini", [".cfg"] = "ini", [".conf"] = "ini",
+        [".log"] = "plaintext"
+    };
+
+    private static string BuildCodeHtml(string ext, string text)
+    {
+        var lang = HljsLanguage.TryGetValue(ext, out var mapped) ? mapped : ext.TrimStart('.');
+        // Highlighting very large files (big logs) hangs the page — plain text is fine there
+        var highlight = text.Length < 500_000;
+        return $$"""
+            <!doctype html><html><head><meta charset="utf-8">
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+            <style>
+              body { margin: 0; background: #1E1E1E; }
+              pre { margin: 0; padding: 16px 20px; font: 13px/1.5 Consolas, 'Cascadia Mono', monospace;
+                    color: #d4d4d4; white-space: pre-wrap; word-break: break-all; }
+            </style></head><body>
+            <pre><code class="language-{{lang}}">{{System.Net.WebUtility.HtmlEncode(text)}}</code></pre>
+            {{(highlight ? """
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+            <script>hljs.highlightAll();</script>
+            """ : "")}}
+            </body></html>
+            """;
     }
 
     private static async Task<bool> CopyWithRetry(string src, string dst)

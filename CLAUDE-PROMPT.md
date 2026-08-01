@@ -40,6 +40,11 @@ no other action needed. If the app isn't running, launch it first:
 - **PDF, SVG, PNG/JPG/GIF/WebP, txt, json** — rendered natively.
 - **Word (`.docx`) / Excel (`.xlsx`)** — rendered via CDN libraries (needs
   internet). Fine for viewing dropped files; prefer md/html for what you author.
+- **CSV/TSV** — rendered as a table. Good for tabular query results/exports.
+- **Code, config, and log files** (`.py` `.js` `.ts` `.cs` `.sql` `.yaml`
+  `.log` `.ps1` `.sh` and more) — syntax-highlighted. Useful for showing a
+  script or log excerpt as a deliverable.
+- **Video/audio** (`.mp4` `.webm` `.mp3` `.wav`) — native playback.
 
 **Seeing what I see:** the viewer writes the path of the currently displayed
 file to `%LOCALAPPDATA%\ArtifactViewer\current.txt`. When I say "look at the

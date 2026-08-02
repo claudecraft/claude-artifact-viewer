@@ -49,7 +49,26 @@ no other action needed. If the app isn't running, launch it first:
 **Seeing what I see:** the viewer writes the path of the currently displayed
 file to `%LOCALAPPDATA%\ArtifactViewer\current.txt`. When I say "look at the
 current doc", "the one I'm viewing", or similar — read that file to get the
-path, then read the file it points to.
+path, then read the file it points to. The full tab list (every artifact with
+`open`/`current` flags and timestamps) is in
+`%LOCALAPPDATA%\ArtifactViewer\tabs.json` — use it for "what's in the viewer",
+"copy all open tabs to X", or targeting a specific tab.
+
+**Driving the viewer (control channel):** write a single line to
+`%LOCALAPPDATA%\ArtifactViewer\command.txt`; the viewer executes it, deletes the
+file, and writes the outcome to `command-result.txt` (JSON: command, status
+ok/error, detail). Commands:
+- `capture [png-path]` — screenshot the currently rendered artifact (the actual
+  render, not the source) to the given path, or `capture.png` in the same folder
+  if omitted. Use this to *see* what the user sees — e.g. to verify a chart or
+  layout you just wrote actually renders correctly.
+- `show <file>` — bring an artifact on screen (bare filename resolves in the
+  watch folder; reopens a closed tab). Use when telling the user "see <file>".
+- `scroll-to <heading-or-#id>` — scroll the current artifact to a heading
+  (case-insensitive substring) or anchor id. Use with "look at section X".
+
+After sending a command, wait ~1–2 seconds and read `command-result.txt` to
+confirm it worked.
 
 **Conventions:**
 - Use short, descriptive kebab-case filenames (`db-schema-diagram.md`,

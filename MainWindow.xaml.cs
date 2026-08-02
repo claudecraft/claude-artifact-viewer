@@ -41,6 +41,9 @@ public partial class MainWindow : Window
     private string _watchDir;
     private readonly string _renderDir;
     private readonly string _settingsPath;
+    private readonly string _appDataDir;
+    private FileSystemWatcher? _cmdWatcher;
+    private bool _processingCommand;
     private readonly ObservableCollection<FileEntry> _files = new();
     private readonly ObservableCollection<SidebarItem> _allFiles = new();
     private List<FileEntry> _scanned = new();
@@ -133,6 +136,7 @@ public partial class MainWindow : Window
         var appDataDir = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ArtifactViewer");
         Directory.CreateDirectory(appDataDir);
+        _appDataDir = appDataDir;
         _settingsPath = System.IO.Path.Combine(appDataDir, "settings.json");
 
         _watchDir = ResolveWatchDir(Environment.GetCommandLineArgs());
@@ -182,6 +186,7 @@ public partial class MainWindow : Window
         _webReady = true;
 
         StartWatcher();
+        StartCommandWatcher();
         Rescan(selectLatest: true);
     }
 
@@ -281,11 +286,145 @@ public partial class MainWindow : Window
     {
         try
         {
-            File.WriteAllText(System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ArtifactViewer", "current.txt"), path);
+            File.WriteAllText(System.IO.Path.Combine(_appDataDir, "current.txt"), path);
         }
         catch (Exception) { /* non-fatal: "look at current doc" just won't resolve */ }
+    }
+
+    private void WriteTabsState()
+    {
+        try
+        {
+            var tabs = _scanned.Select(f => new
+            {
+                name = f.Name,
+                path = f.Path,
+                lastWrite = f.LastWrite,
+                open = !_closed.ContainsKey(f.Path),
+                current = string.Equals(f.Path, _renderedPath, StringComparison.OrdinalIgnoreCase)
+            });
+            File.WriteAllText(System.IO.Path.Combine(_appDataDir, "tabs.json"),
+                JsonSerializer.Serialize(tabs, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception) { /* non-fatal: tab listing just goes stale */ }
+    }
+
+    // ---------- Control channel (Claude Code drives the viewer via command.txt) ----------
+    // Write "capture [png-path]" | "show <file>" | "scroll-to <heading-or-#id>" to
+    // %LOCALAPPDATA%\ArtifactViewer\command.txt; the outcome lands in command-result.txt.
+
+    private void StartCommandWatcher()
+    {
+        var cmdFile = System.IO.Path.Combine(_appDataDir, "command.txt");
+        try { File.Delete(cmdFile); } catch (Exception) { /* stale command from a previous run */ }
+
+        _cmdWatcher = new FileSystemWatcher(_appDataDir, "command.txt")
+        {
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+            EnableRaisingEvents = true
+        };
+        FileSystemEventHandler onCmd = (_, _) => Dispatcher.InvokeAsync(() => _ = ProcessCommandFile());
+        _cmdWatcher.Created += onCmd;
+        _cmdWatcher.Changed += onCmd;
+        _cmdWatcher.Renamed += (_, _) => Dispatcher.InvokeAsync(() => _ = ProcessCommandFile());
+    }
+
+    private async Task ProcessCommandFile()
+    {
+        if (_processingCommand) return;
+        var cmdFile = System.IO.Path.Combine(_appDataDir, "command.txt");
+        if (!File.Exists(cmdFile)) return;
+        _processingCommand = true;
+        try
+        {
+            var text = (await ReadTextWithRetry(cmdFile))?.Trim();
+            try { File.Delete(cmdFile); } catch (Exception) { /* re-processing is harmless */ }
+            if (string.IsNullOrEmpty(text)) return;
+
+            var space = text.IndexOfAny(new[] { ' ', '\t' });
+            var verb = (space < 0 ? text : text[..space]).ToLowerInvariant();
+            var arg = space < 0 ? "" : text[(space + 1)..].Trim().Trim('"');
+
+            string status = "ok", detail;
+            try
+            {
+                detail = verb switch
+                {
+                    "capture" => await CmdCapture(arg),
+                    "show" => CmdShow(arg),
+                    "scroll-to" => await CmdScrollTo(arg),
+                    _ => throw new InvalidOperationException($"unknown command '{verb}' (capture | show | scroll-to)")
+                };
+            }
+            catch (Exception ex)
+            {
+                status = "error";
+                detail = ex.Message;
+            }
+
+            try
+            {
+                File.WriteAllText(System.IO.Path.Combine(_appDataDir, "command-result.txt"),
+                    JsonSerializer.Serialize(new { command = text, status, detail, at = DateTime.Now },
+                        new JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch (Exception) { /* caller just won't see the ack */ }
+        }
+        finally { _processingCommand = false; }
+    }
+
+    private async Task<string> CmdCapture(string arg)
+    {
+        if (!_webReady || _renderedPath is null) throw new InvalidOperationException("nothing rendered yet");
+        var output = string.IsNullOrEmpty(arg)
+            ? System.IO.Path.Combine(_appDataDir, "capture.png")
+            : System.IO.Path.GetFullPath(arg);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(output)!);
+        using (var stream = new FileStream(output, FileMode.Create, FileAccess.Write))
+            await Web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream);
+        return output;
+    }
+
+    private string CmdShow(string arg)
+    {
+        if (string.IsNullOrEmpty(arg)) throw new InvalidOperationException("show needs a file name");
+        var wanted = arg.Contains('\\') || arg.Contains('/')
+            ? System.IO.Path.GetFullPath(arg)
+            : System.IO.Path.Combine(_watchDir, arg);
+        var entry = _scanned.FirstOrDefault(f => string.Equals(f.Path, wanted, StringComparison.OrdinalIgnoreCase))
+                 ?? _scanned.FirstOrDefault(f => string.Equals(f.Name, arg, StringComparison.OrdinalIgnoreCase));
+        if (entry is null) throw new InvalidOperationException($"no artifact named '{arg}' in {_watchDir}");
+
+        if (_closed.Remove(entry.Path))
+        {
+            SaveClosed();
+            var i = 0;
+            while (i < _files.Count && _files[i].LastWrite <= entry.LastWrite) i++;
+            _files.Insert(i, entry);
+            RebuildSidebar();
+        }
+        TabStrip.SelectedItem = _files.FirstOrDefault(f => f.Path == entry.Path);
+        return entry.Path;
+    }
+
+    private async Task<string> CmdScrollTo(string arg)
+    {
+        if (string.IsNullOrEmpty(arg)) throw new InvalidOperationException("scroll-to needs a heading or anchor id");
+        if (!_webReady || _renderedPath is null) throw new InvalidOperationException("nothing rendered yet");
+        var query = JsonSerializer.Serialize(arg.TrimStart('#'));
+        var result = await Web.CoreWebView2.ExecuteScriptAsync($$"""
+            (() => {
+              const q = {{query}}.toLowerCase();
+              const all = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,[id]')];
+              const el = all.find(e => (e.id || '').toLowerCase() === q)
+                      || all.find(e => /^H[1-6]$/.test(e.tagName) && e.textContent.trim().toLowerCase().includes(q));
+              if (!el) return 'not-found';
+              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              return 'ok';
+            })()
+            """);
+        if (result.Contains("not-found")) throw new InvalidOperationException($"no heading or anchor matching '{arg}'");
+        return $"scrolled to '{arg}'";
     }
 
     // ---------- Keep (promote to a durable folder) ----------
@@ -398,6 +537,7 @@ public partial class MainWindow : Window
         if (selectedPath is not null)
             SideList.SelectedItem = _allFiles.FirstOrDefault(s => s.Entry.Path == selectedPath);
         _syncingSelection = false;
+        WriteTabsState();
     }
 
     private void TabStrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -554,6 +694,7 @@ public partial class MainWindow : Window
         _renderedPath = entry.Path;
         _renderedWrite = entry.LastWrite;
         WriteCurrentDocState(entry.Path);
+        WriteTabsState();
 
         var ext = System.IO.Path.GetExtension(entry.Path).ToLowerInvariant();
         if (ext is ".md" or ".markdown")

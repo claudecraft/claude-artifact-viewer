@@ -39,9 +39,15 @@ table to terminal scrollback.
 - **Drag & drop** — drop files anywhere on the window to copy them into the
   watched folder and display them (name collision = overwrite, i.e. update)
 - **Claude can see what you see** — the viewer writes the currently displayed
-  file's path to `%LOCALAPPDATA%\ArtifactViewer\current.txt`, so telling Claude
-  Code "look at the current doc" just works (the included
-  [CLAUDE-PROMPT.md](CLAUDE-PROMPT.md) teaches it the convention)
+  file's path to `%LOCALAPPDATA%\ArtifactViewer\current.txt` and the full tab
+  list to `tabs.json`, so telling Claude Code "look at the current doc" or
+  "copy all open tabs somewhere" just works (the included
+  [CLAUDE-PROMPT.md](CLAUDE-PROMPT.md) teaches it the conventions)
+- **Claude can drive the viewer** — a file-based control channel
+  (`%LOCALAPPDATA%\ArtifactViewer\command.txt` → `command-result.txt`) with
+  three commands: `capture <png-path>` screenshots the current render (Claude
+  can verify the chart it just wrote actually looks right), `show <file>`
+  brings an artifact on screen, `scroll-to <heading>` jumps to a section
 - **Live reload** — editing the shown file re-renders it; a new file
   auto-displays only if you're already viewing the latest (browsing history
   never gets interrupted)

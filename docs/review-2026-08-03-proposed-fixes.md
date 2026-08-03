@@ -1,7 +1,7 @@
 # Proposed fixes from Fable's 2026-08-03 review
 
-Status: **1, 2 and the SVG framing implemented** (2026-08-03, reviewed and amended
-by Opus — see "Implementation notes" at the end). 3 and 4 remain proposed. Full
+Status: **1, 2, 4 and the SVG framing implemented** (2026-08-03, reviewed and
+amended by Opus — see "Implementation notes" at the end). 3 remains proposed. Full
 review narrative is in the artifact viewer as `artifact-viewer-code-review.md`;
 this doc is the actionable subset with implementation sketches.
 
@@ -232,7 +232,41 @@ private const string RenderHost = Renderers.RenderHost;
 `using Markdig;` moves from `MainWindow.xaml.cs` to `Renderers.cs` (no other
 Markdig use remains in MainWindow).
 
-**Follow-on this unlocks (not this round):** `ParseDelimited`,
+**Implemented 2026-08-03, ahead of the planned macOS port** — moving a clean seam
+across is cheaper than untangling it afterwards with two platform shells to keep
+in sync. Done as proposed, with three deviations:
+
+- **No const aliases.** The sketch suggested
+  `private const string VirtualHost = Renderers.VirtualHost;` to keep the diff
+  small. The ~10 call sites reference `Renderers.VirtualHost` directly instead,
+  so the dependency direction is visible at each use rather than hidden behind a
+  same-named local const.
+- **`ParseDelimited` is `internal`, not `private`**, so the test project planned
+  after the port can reach it without `InternalsVisibleTo` gymnastics. The rest
+  of the moved members are private except the six `Build*Html` entry points and
+  the two host constants.
+- **`BuildSvgHtml` moved too** (it postdates the proposal), and `using
+  System.Text;` came out of `MainWindow` along with `using Markdig;` — the last
+  `StringBuilder` went with the renderers.
+
+`MainWindow.xaml.cs` 2,085 → 1,561 lines; `Renderers.cs` is 558.
+
+**Verified behaviour-preserving by byte comparison, not just by eye.** The
+generated pages (`current.html`, `csv.html`, `code.html`, `svg.html`,
+`office.html`) were captured from the pre-extraction build at `92a4c8e` and from
+the extracted build for the same five artifacts, and hashed: identical, SHA-256
+for SHA-256. That check first *failed* — every file differed by one byte per
+line, because `Renderers.cs` was authored with LF endings while the repo is CRLF,
+and C# raw string literals embed the source file's line endings verbatim. Worth
+knowing for the port: a renderer file with the wrong line endings silently
+changes every byte of generated output. Converted to CRLF, then identical.
+
+The notebook renderer has no artifact in the test folder to compare against, so
+it was exercised functionally instead — a notebook with markdown, code, stream,
+`execute_result`, `error` and `raw` cells rendered correctly, with the ANSI
+escapes stripped from the traceback and `NotebookCss` present in the output.
+
+**Follow-on this unlocks (still to do):** `ParseDelimited`,
 `BuildCsvHtml`, and `BuildNotebookHtml` become trivially testable once they
 live in a UI-free class — a small test project covering quoted-field CSV edge
 cases and nbformat string-vs-array sources would catch the likeliest quiet

@@ -1368,6 +1368,14 @@ public partial class MainWindow : Window
     {
         if (!_webReady) return;
 
+        // Rendering something means the empty state is over. Set here rather than at
+        // the call sites: reopening a closed tab (sidebar click, or the show command)
+        // adds it directly without a Rescan, and Rescan used to be the only place
+        // that revealed the WebView again — so after Close all tabs, reopening a doc
+        // rendered it behind the "No artifacts yet" message.
+        TxtEmpty.Visibility = Visibility.Collapsed;
+        Web.Visibility = Visibility.Visible;
+
         TxtTitle.Text = entry.Name;
         TxtDate.Text = entry.LastWrite.ToString("MMM d, h:mm:ss tt");
         Title = $"{entry.Name} — Artifact Viewer";

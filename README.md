@@ -1,8 +1,19 @@
 # Artifact Viewer
 
+[![Latest release](https://img.shields.io/github/v/release/claudecraft/claude-artifact-viewer?label=download)](https://github.com/claudecraft/claude-artifact-viewer/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/claudecraft/claude-artifact-viewer/total)](https://github.com/claudecraft/claude-artifact-viewer/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **Local artifacts for Claude Code on Windows.** A small WPF + WebView2 app that
 watches a folder and instantly renders any file dropped into it — so Claude
 Code gets the "artifact panel" experience from the Claude desktop app.
+
+### ⬇ [Download ArtifactViewer.exe](https://github.com/claudecraft/claude-artifact-viewer/releases/latest/download/ArtifactViewer.exe)
+
+One file, ~63 MB, run it. The size is the bundled .NET runtime — there is nothing
+to install, unzip, or configure. Windows shows *"Windows protected your PC"* on
+first run because the file isn't code-signed: **More info → Run anyway**
+([why](#is-it-safe)). Prefer to build it yourself? [Jump to the source](#build-from-source).
 
 ![Artifact Viewer screenshot](docs/screenshot.png)
 
@@ -71,24 +82,37 @@ table to terminal scrollback.
 
 ## Getting started
 
-### Download (no toolchain needed)
-
-Grab **ArtifactViewer.exe** from the
-[latest release](https://github.com/claudecraft/claude-artifact-viewer/releases/latest)
-and run it. One file, ~62 MB, self-contained — no .NET install, nothing to
-unzip, and nothing written outside your user folder (settings live in
-`%LOCALAPPDATA%\ArtifactViewer\`).
-
-The download isn't code-signed, so Windows shows *"Windows protected your PC"*
-the first time: **More info → Run anyway**. Signing certificates require a
-verified legal identity this project doesn't have. Each release is built from its
-tag by [the release workflow](.github/workflows/release.yml) on a GitHub runner,
-so you can check the build rather than trust the binary — or build it yourself
-below.
+### Requirements
 
 Windows 10 or 11, plus the Microsoft Edge **WebView2 runtime** — preinstalled on
-Windows 11 and most Windows 10 machines. If it's missing, the app tells you and
-offers the download page instead of failing silently.
+Windows 11 and most Windows 10 machines. If it's missing, the app says so on
+launch and offers the download page rather than failing silently. Nothing is
+written outside your own user folder: settings live in
+`%LOCALAPPDATA%\ArtifactViewer\`, and deleting that folder plus the exe removes
+every trace. No registry keys, no installer, no services.
+
+### Is it safe?
+
+Fair question for an unsigned 63 MB binary from an account you've never heard of.
+What's on offer instead of a signature:
+
+- **The build is public.** Every release is built from its tag by
+  [the release workflow](.github/workflows/release.yml) on a GitHub-hosted
+  runner, not on anybody's laptop. The log is public, so you can see exactly what
+  produced the file.
+- **The file is verifiable.** Each release publishes the exe's SHA-256, both in
+  the release notes and as an `ArtifactViewer.exe.sha256` asset. Compare it:
+  ```
+  Get-FileHash ArtifactViewer.exe -Algorithm SHA256
+  ```
+- **The source is all here**, including the two vendored libraries in
+  `assets/lib/`, kept byte-identical to their upstream downloads so you can diff
+  them against the CDN copies ([notices](THIRD-PARTY-NOTICES.md)).
+- **Or skip the binary entirely** and build from source below — same result.
+
+It isn't code-signed because signing certificates are issued against a verified
+legal identity, which this project doesn't have. SmartScreen's warning means
+"rarely downloaded", not "known bad".
 
 ### Build from source
 

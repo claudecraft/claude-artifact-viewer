@@ -45,13 +45,54 @@ jobs:
             throw "publish produced loose files alongside the exe; single-file packaging is broken"
           }
 
+      # A published hash is the only verification on offer for an unsigned
+      # binary, so it's computed here and shipped both ways: in the release
+      # notes and as a separate asset.
+      - name: Checksum and release body
+        shell: pwsh
+        run: |
+          $exe = Get-Item publish/ArtifactViewer.exe
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          $mb = "{0:N0}" -f ($exe.Length / 1MB)
+
+          # .NET file APIs rather than Set-Content/Get-Content: explicit UTF-8
+          # without a BOM whichever PowerShell runs this, so the notes can't
+          # mojibake on the release page. Appended text is kept ASCII-only.
+          $utf8 = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::WriteAllText(
+            "$pwd/ArtifactViewer.exe.sha256", "$hash  ArtifactViewer.exe`n", $utf8)
+
+          $notes = [System.IO.File]::ReadAllText(
+            "$pwd/.github/release-notes.md", [System.Text.Encoding]::UTF8)
+          $tick = [string][char]96
+          $fence = $tick * 3
+          $footer = @"
+
+          ---
+
+          **ArtifactViewer.exe** - $mb MB, SHA-256:
+
+          $fence
+          $hash
+          $fence
+
+          Verify with ${tick}Get-FileHash ArtifactViewer.exe -Algorithm SHA256${tick}, or
+          against the ${tick}ArtifactViewer.exe.sha256${tick} asset. Built by
+          [run #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          from ${tick}${{ github.sha }}${tick}.
+          "@
+          [System.IO.File]::WriteAllText("$pwd/release-body.md", $notes + $footer, $utf8)
+          "SHA-256: $hash"
+
       # Non-tag runs keep the exe as a build artifact for inspection
       - name: Upload build artifact
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
           name: ArtifactViewer-exe
-          path: publish/ArtifactViewer.exe
+          path: |
+            publish/ArtifactViewer.exe
+            ArtifactViewer.exe.sha256
 
       - name: Create release
         if: startsWith(github.ref, 'refs/tags/')
@@ -60,5 +101,6 @@ jobs:
         run: >
           gh release create "${{ github.ref_name }}"
           publish/ArtifactViewer.exe
+          ArtifactViewer.exe.sha256
           --title "Artifact Viewer ${{ github.ref_name }}"
-          --notes-file .github/release-notes.md
+          --notes-file release-body.md

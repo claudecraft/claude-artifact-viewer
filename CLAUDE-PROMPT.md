@@ -42,6 +42,9 @@ no other action needed. If the app isn't running, launch it first:
   internet). Fine for viewing dropped files; prefer md/html for what you author.
 - **CSV/TSV** — rendered as a table (parsed in-app, handles quoted fields with
   commas and newlines). Good for tabular query results/exports.
+- **Jupyter notebooks** (`.ipynb`) — markdown cells rendered, code highlighted,
+  outputs shown (text, PNG/JPEG figures, HTML, tracebacks). Read-only, nothing
+  executes. Fine for handing over an analysis complete with its charts.
 - **Code, config, and log files** (`.py` `.js` `.ts` `.cs` `.sql` `.yaml`
   `.log` `.ps1` `.sh` and more) — syntax-highlighted. Useful for showing a
   script or log excerpt as a deliverable.

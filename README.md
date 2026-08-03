@@ -35,9 +35,18 @@ table to terminal scrollback.
   fields containing commas and newlines survive), and **source/config/log
   files** (.py .js .ts .cs .sql .yaml .log .ps1 and ~20 more) with syntax
   highlighting
+- **Jupyter notebooks** (`.ipynb`) — markdown cells rendered, code cells
+  highlighted, and outputs shown beneath them: stream text, `text/plain`
+  results, embedded PNG/JPEG figures, HTML output, and tracebacks with the
+  terminal colour codes stripped. Read-only; nothing is executed.
 - **Works offline** — mermaid and highlight.js are bundled into the exe, not
   fetched from a CDN, so markdown, diagrams and code render on a plane and a
   release renders identically forever. Only Word/Excel reach the network.
+- **Zoom** — `Ctrl +` / `Ctrl -` / `Ctrl 0`, persisted between sessions and
+  reapplied as you move between artifacts.
+- **Update notice** — checks GitHub for a newer release at most once a day and
+  shows a dismissible banner. It sends nothing but a User-Agent; turn it off
+  with `"checkForUpdates": "false"` in `settings.json`.
 - **Tabs** — one per file, ordered oldest → newest; hover for a ✕ that hides
   the tab without touching the file. Closed state persists across restarts;
   a closed file reopens automatically if it's rewritten.
@@ -90,6 +99,19 @@ launch and offers the download page rather than failing silently. Nothing is
 written outside your own user folder: settings live in
 `%LOCALAPPDATA%\ArtifactViewer\`, and deleting that folder plus the exe removes
 every trace. No registry keys, no installer, no services.
+
+### What touches the network
+
+Two things, both easy to avoid, and neither sends any information about you or
+your files:
+
+| What | When | Opt out |
+|---|---|---|
+| GitHub releases API | once a day at most, to notice a new version | `"checkForUpdates": "false"` in `settings.json` |
+| CDN libraries for Word/Excel rendering | only when you open a `.docx` or `.xlsx` | don't open those file types |
+
+Markdown, diagrams, code highlighting, CSV, notebooks, images, PDFs and media
+all render entirely offline.
 
 ### Is it safe?
 

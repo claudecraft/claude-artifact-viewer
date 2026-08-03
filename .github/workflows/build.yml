@@ -1,0 +1,45 @@
+# Build check for pushes and pull requests.
+#
+# Release packaging only runs on a tag, which meant a broken commit could sit
+# unnoticed until release time and a contributor's PR got no signal at all.
+# This builds Debug and exercises the Release single-file path as well, since
+# that path has its own settings and can break independently.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build (Debug)
+        run: dotnet build ArtifactViewer.csproj -c Debug --nologo
+
+      - name: Publish (Release, single file)
+        run: dotnet publish ArtifactViewer.csproj -c Release -r win-x64 -o publish --nologo
+
+      - name: Assert the release really is one file
+        shell: pwsh
+        run: |
+          $exe = Get-Item publish/ArtifactViewer.exe
+          "{0} - {1:N1} MB" -f $exe.Name, ($exe.Length / 1MB)
+          $extra = Get-ChildItem publish -File | Where-Object Name -ne 'ArtifactViewer.exe'
+          if ($extra) {
+            $extra | Select-Object Name, Length
+            throw "publish produced loose files alongside the exe; single-file packaging is broken"
+          }

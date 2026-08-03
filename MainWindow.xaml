@@ -100,6 +100,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -206,8 +207,24 @@
             </ListBox.ItemTemplate>
         </ListBox>
 
+        <!-- Update notice: hidden unless a newer release exists -->
+        <Border x:Name="UpdateBanner" Grid.Row="2" Background="#0E4B6E" BorderBrush="#1A6B96"
+                BorderThickness="0,1,0,1" Padding="12,6" Visibility="Collapsed">
+            <DockPanel LastChildFill="False">
+                <TextBlock x:Name="TxtUpdate" DockPanel.Dock="Left" Foreground="#DCEEF8" FontSize="12"
+                           VerticalAlignment="Center" Text=""/>
+                <Button DockPanel.Dock="Left" Style="{StaticResource NavButton}" FontSize="12"
+                        Margin="10,0,0,0" Padding="8,2" Content="Get it"
+                        Foreground="White" Click="BtnUpdate_Click"
+                        ToolTip="Open the releases page"/>
+                <Button DockPanel.Dock="Right" Style="{StaticResource NavButton}" FontSize="11"
+                        Padding="6,2" Content="&#x2715;" Click="BtnUpdateDismiss_Click"
+                        ToolTip="Dismiss"/>
+            </DockPanel>
+        </Border>
+
         <!-- Sidebar + viewer -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>

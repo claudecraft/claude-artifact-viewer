@@ -30,7 +30,7 @@ public partial class MainWindow : Window
 
     private static readonly string[] SupportedExtensions = new[]
     {
-        ".md", ".markdown", ".html", ".htm", ".pdf", ".svg",
+        ".md", ".markdown", ".ipynb", ".html", ".htm", ".pdf", ".svg",
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif",
         ".txt", ".json", ".docx", ".xlsx", ".csv", ".tsv",
         ".mp4", ".webm", ".mp3", ".wav"
@@ -311,9 +311,18 @@ public partial class MainWindow : Window
             }, true);
             """);
         Web.CoreWebView2.WebMessageReceived += Web_WebMessageReceived;
-        Web.CoreWebView2.NavigationCompleted += (_, _) => _navSignal?.TrySetResult(true);
+        Web.CoreWebView2.NavigationCompleted += (_, _) =>
+        {
+            _navSignal?.TrySetResult(true);
+            ApplyZoom();
+        };
 
         _webReady = true;
+
+        if (double.TryParse(LoadSetting("zoom"), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var savedZoom))
+            _zoom = Math.Clamp(savedZoom, ZoomMin, ZoomMax);
+        ApplyZoom();
 
         StartWatcher();
         StartCommandWatcher();
@@ -326,6 +335,9 @@ public partial class MainWindow : Window
             catch (Exception) { /* unsupported type, or deleted between launch and scan */ }
             _initialFile = null;
         }
+
+        // Deliberately last and un-awaited: nothing about startup waits on the network
+        _ = CheckForUpdateAsync();
     }
 
     private const string WebView2DownloadUrl =
@@ -362,6 +374,61 @@ public partial class MainWindow : Window
         }
         catch (Exception) { /* no default browser — the URL is on screen anyway */ }
     }
+
+    // ---------- Update check ----------
+    // The only network request this app makes on its own behalf. It sends nothing
+    // but a User-Agent, runs at most once a day, and is switched off entirely by
+    // setting "checkForUpdates": "false" in settings.json.
+
+    private const string ReleasesApiUrl =
+        "https://api.github.com/repos/claudecraft/claude-artifact-viewer/releases/latest";
+    private const string ReleasesPageUrl =
+        "https://github.com/claudecraft/claude-artifact-viewer/releases/latest";
+
+    private async Task CheckForUpdateAsync()
+    {
+        if (string.Equals(LoadSetting("checkForUpdates"), "false", StringComparison.OrdinalIgnoreCase)) return;
+
+        if (DateTime.TryParse(LoadSetting("lastUpdateCheck"), null,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var last)
+            && (DateTime.UtcNow - last).TotalHours < 24) return;
+
+        // Stamped before the request: a failing network shouldn't retry every launch
+        SaveSetting("lastUpdateCheck", DateTime.UtcNow.ToString("o"));
+
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("ArtifactViewer");
+            using var doc = JsonDocument.Parse(await http.GetStringAsync(ReleasesApiUrl));
+
+            var tag = doc.RootElement.TryGetProperty("tag_name", out var t) ? t.GetString() : null;
+            if (string.IsNullOrWhiteSpace(tag)) return;
+            if (!Version.TryParse(tag.TrimStart('v', 'V'), out var latest)) return;
+
+            var current = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            if (current is null || latest <= current) return;
+
+            TxtUpdate.Text = $"Version {tag} is available — you have v{current.ToString(3)}.";
+            UpdateBanner.Visibility = Visibility.Visible;
+        }
+        catch (Exception)
+        {
+            // Offline, rate-limited, or GitHub down: staying quiet is the right answer
+        }
+    }
+
+    private void BtnUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(ReleasesPageUrl) { UseShellExecute = true });
+        }
+        catch (Exception) { /* no default browser */ }
+    }
+
+    private void BtnUpdateDismiss_Click(object sender, RoutedEventArgs e) =>
+        UpdateBanner.Visibility = Visibility.Collapsed;
 
     // ---------- Watching ----------
 
@@ -962,7 +1029,42 @@ public partial class MainWindow : Window
             var key = e.Key == Key.System ? e.SystemKey : e.Key;
             if (key == Key.Left) { Step(-1); e.Handled = true; }
             else if (key == Key.Right) { Step(+1); e.Handled = true; }
+            return;
         }
+
+        if (Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            switch (e.Key)
+            {
+                case Key.OemPlus or Key.Add:
+                    StepZoom(+0.1); e.Handled = true; break;
+                case Key.OemMinus or Key.Subtract:
+                    StepZoom(-0.1); e.Handled = true; break;
+                case Key.D0 or Key.NumPad0:
+                    SetZoom(1.0); e.Handled = true; break;
+            }
+        }
+    }
+
+    // ---------- Zoom ----------
+
+    private const double ZoomMin = 0.5, ZoomMax = 3.0;
+    private double _zoom = 1.0;
+
+    private void StepZoom(double delta) => SetZoom(_zoom + delta);
+
+    private void SetZoom(double zoom)
+    {
+        _zoom = Math.Clamp(Math.Round(zoom, 2), ZoomMin, ZoomMax);
+        ApplyZoom();
+        TxtDate.Text = $"zoom {_zoom * 100:0}%";
+        SaveSetting("zoom", _zoom.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Reapplied after every navigation — WebView2 doesn't carry it across.</summary>
+    private void ApplyZoom()
+    {
+        if (_webReady) Web.ZoomFactor = _zoom;
     }
 
     private void BtnPin_Changed(object sender, RoutedEventArgs e) => Topmost = BtnPin.IsChecked == true;
@@ -1011,7 +1113,7 @@ public partial class MainWindow : Window
         var ext = System.IO.Path.GetExtension(entry.Path).ToLowerInvariant();
 
         // Arm the render-settled signals before navigating (see _renderSignal)
-        _expectRenderSignal = ext is ".md" or ".markdown" or ".docx" or ".xlsx" or ".csv" or ".tsv"
+        _expectRenderSignal = ext is ".md" or ".markdown" or ".ipynb" or ".docx" or ".xlsx" or ".csv" or ".tsv"
             || CodeExtensions.Contains(ext);
         _renderSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _navSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1024,6 +1126,14 @@ public partial class MainWindow : Window
             // (NavigateToString's about:blank origin breaks dynamic ESM imports like mermaid)
             var rendered = System.IO.Path.Combine(_renderDir, "current.html");
             await File.WriteAllTextAsync(rendered, BuildMarkdownHtml(text));
+            Web.CoreWebView2.Navigate($"https://{RenderHost}/current.html?v={entry.LastWrite.Ticks}");
+        }
+        else if (ext == ".ipynb")
+        {
+            var text = await ReadTextWithRetry(entry.Path);
+            if (text is null) return;
+            var rendered = System.IO.Path.Combine(_renderDir, "current.html");
+            await File.WriteAllTextAsync(rendered, BuildNotebookHtml(text));
             Web.CoreWebView2.Navigate($"https://{RenderHost}/current.html?v={entry.LastWrite.Ticks}");
         }
         else if (ext is ".docx" or ".xlsx")
@@ -1161,6 +1271,161 @@ public partial class MainWindow : Window
             """;
     }
 
+    // Jupyter tracebacks carry terminal colour codes, which would print as noise
+    private static readonly System.Text.RegularExpressions.Regex AnsiEscape =
+        new(@"\x1B\[[0-9;]*[a-zA-Z]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private const int NotebookOutputCharLimit = 20_000;
+
+    private static readonly string NotebookCss = """
+  .nb-cell { margin: 0 0 18px; }
+  .nb-in { display: block; color: #6a9955; font: 11px Consolas, monospace; margin-bottom: 3px; }
+  .nb-out { border-left: 3px solid #3a3a3a; margin: 6px 0 0 0; padding-left: 12px; }
+  .nb-out pre { background: #1b1b1b; border-color: #2a2a2a; margin: 4px 0; }
+  .nb-err pre { background: #3a1d1d; border-color: #6b2b2b; color: #ffb3b3; }
+  .nb-out img { max-width: 100%; background: #fff; border-radius: 4px; padding: 4px; }
+  @media print {
+    .nb-cell { break-inside: avoid; }
+    .nb-in { color: #487a3a; }
+    .nb-out { border-left-color: #c8c8c8; }
+    .nb-out pre { background: #f7f7f7; border-color: #dcdcdc; }
+    .nb-err pre { background: #fdf0f0; border-color: #e0b4b4; color: #7a1d1d; }
+  }
+""";
+
+    /// <summary>
+    /// Renders a Jupyter notebook: markdown cells through Markdig, code cells
+    /// highlighted, and outputs (text, images, HTML, errors) below their cell.
+    /// Read-only — nothing is executed.
+    /// </summary>
+    private static string BuildNotebookHtml(string json)
+    {
+        // nbformat stores source and text as either a string or an array of lines
+        static string Text(JsonElement e) => e.ValueKind switch
+        {
+            JsonValueKind.String => e.GetString() ?? "",
+            JsonValueKind.Array => string.Concat(e.EnumerateArray().Select(x => x.GetString() ?? "")),
+            _ => ""
+        };
+
+        static string Pre(string text, string cssClass = "")
+        {
+            if (text.Length > NotebookOutputCharLimit)
+                text = text[..NotebookOutputCharLimit] + "\n… output truncated …";
+            var open = string.IsNullOrEmpty(cssClass) ? "<pre>" : $"<pre class=\"{cssClass}\">";
+            return $"{open}<code>{System.Net.WebUtility.HtmlEncode(text)}</code></pre>";
+        }
+
+        var html = new StringBuilder();
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(json); }
+        catch (Exception ex)
+        {
+            return BuildDocumentHtml(
+                $"<p class='missing-image'>This file isn't valid notebook JSON: {System.Net.WebUtility.HtmlEncode(ex.Message)}</p>",
+                NotebookCss);
+        }
+
+        using (doc)
+        {
+            if (!doc.RootElement.TryGetProperty("cells", out var cells) || cells.ValueKind != JsonValueKind.Array)
+                return BuildDocumentHtml("<p class='missing-image'>No cells in this notebook.</p>", NotebookCss);
+
+            // Notebooks are overwhelmingly Python; fall back to it when unspecified
+            var language = "python";
+            if (doc.RootElement.TryGetProperty("metadata", out var meta)
+                && meta.TryGetProperty("language_info", out var li)
+                && li.TryGetProperty("name", out var ln))
+                language = ln.GetString() ?? "python";
+
+            foreach (var cell in cells.EnumerateArray())
+            {
+                var type = cell.TryGetProperty("cell_type", out var ct) ? ct.GetString() : "code";
+                var source = cell.TryGetProperty("source", out var src) ? Text(src) : "";
+
+                html.Append("<div class=\"nb-cell\">");
+
+                if (type == "markdown")
+                {
+                    html.Append(Markdown.ToHtml(source, MarkdownPipeline));
+                }
+                else if (type == "raw")
+                {
+                    html.Append(Pre(source));
+                }
+                else
+                {
+                    var n = cell.TryGetProperty("execution_count", out var ec) && ec.ValueKind == JsonValueKind.Number
+                        ? ec.GetInt32().ToString()
+                        : " ";
+                    html.Append($"<span class=\"nb-in\">In [{n}]</span>");
+                    html.Append($"<pre><code class=\"language-{System.Net.WebUtility.HtmlEncode(language)}\">")
+                        .Append(System.Net.WebUtility.HtmlEncode(source))
+                        .Append("</code></pre>");
+                    AppendOutputs(cell, html, Text, Pre);
+                }
+
+                html.Append("</div>");
+            }
+        }
+
+        return BuildDocumentHtml(html.ToString(), NotebookCss);
+    }
+
+    private static void AppendOutputs(
+        JsonElement cell, StringBuilder html,
+        Func<JsonElement, string> text, Func<string, string, string> pre)
+    {
+        if (!cell.TryGetProperty("outputs", out var outputs) || outputs.ValueKind != JsonValueKind.Array) return;
+
+        foreach (var o in outputs.EnumerateArray())
+        {
+            var kind = o.TryGetProperty("output_type", out var ot) ? ot.GetString() : "";
+
+            if (kind == "stream")
+            {
+                html.Append("<div class=\"nb-out\">")
+                    .Append(pre(o.TryGetProperty("text", out var t) ? text(t) : "", ""))
+                    .Append("</div>");
+            }
+            else if (kind is "execute_result" or "display_data")
+            {
+                if (!o.TryGetProperty("data", out var data)) continue;
+                html.Append("<div class=\"nb-out\">");
+
+                // Richest representation available, preferring images
+                if (data.TryGetProperty("image/png", out var png))
+                {
+                    var b64 = text(png).Replace("\n", "");
+                    html.Append($"<img alt=\"notebook output\" src=\"data:image/png;base64,{b64}\">");
+                }
+                else if (data.TryGetProperty("image/jpeg", out var jpg))
+                {
+                    html.Append($"<img alt=\"notebook output\" src=\"data:image/jpeg;base64,{text(jpg).Replace("\n", "")}\">");
+                }
+                else if (data.TryGetProperty("text/html", out var h))
+                {
+                    // Trusted the same way an .html artifact is: local file, local render
+                    html.Append(text(h));
+                }
+                else if (data.TryGetProperty("text/plain", out var p))
+                {
+                    html.Append(pre(text(p), ""));
+                }
+                html.Append("</div>");
+            }
+            else if (kind == "error")
+            {
+                var name = o.TryGetProperty("ename", out var en) ? en.GetString() : "Error";
+                var value = o.TryGetProperty("evalue", out var ev) ? ev.GetString() : "";
+                var trace = o.TryGetProperty("traceback", out var tb) ? text(tb) : $"{name}: {value}";
+                html.Append("<div class=\"nb-out nb-err\">")
+                    .Append(pre(AnsiEscape.Replace(trace, ""), ""))
+                    .Append("</div>");
+            }
+        }
+    }
+
     private static readonly Dictionary<string, string> HljsLanguage = new()
     {
         [".py"] = "python", [".ps1"] = "powershell", [".yml"] = "yaml",
@@ -1290,19 +1555,11 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private static string BuildMarkdownHtml(string markdown)
-    {
-        var body = Markdown.ToHtml(markdown, MarkdownPipeline);
-        return $$"""
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<base href="https://{{VirtualHost}}/">
-<!-- Absolute render-host URLs: the base tag above points relative paths at the
-     watch folder so markdown images resolve, which would otherwise misdirect these. -->
-<link rel="stylesheet" href="https://{{RenderHost}}/highlight-dark.min.css">
-<style>
+    /// <summary>
+    /// Shared document styling for the markdown and notebook renderers, screen and
+    /// print. Kept in one place so the two can't drift apart.
+    /// </summary>
+    private const string DocumentCss = """
   :root { color-scheme: dark; }
   body {
     background: #1e1e1e; color: #d4d4d4;
@@ -1377,6 +1634,27 @@ public partial class MainWindow : Window
     }
     .mermaid .messageLine0, .mermaid .messageLine1 { stroke: #555 !important; }
   }
+""";
+
+    private static string BuildMarkdownHtml(string markdown) =>
+        BuildDocumentHtml(Markdown.ToHtml(markdown, MarkdownPipeline));
+
+    /// <summary>
+    /// Wraps already-rendered document HTML in the shared page shell: styles,
+    /// vendored highlight.js and mermaid, and the render-done signal.
+    /// </summary>
+    private static string BuildDocumentHtml(string body, string extraCss = "") => $$"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<base href="https://{{VirtualHost}}/">
+<!-- Absolute render-host URLs: the base tag above points relative paths at the
+     watch folder so markdown images resolve, which would otherwise misdirect these. -->
+<link rel="stylesheet" href="https://{{RenderHost}}/highlight-dark.min.css">
+<style>
+{{DocumentCss}}
+{{extraCss}}
 </style>
 </head>
 <body>
@@ -1420,5 +1698,4 @@ public partial class MainWindow : Window
 </body>
 </html>
 """;
-    }
 }

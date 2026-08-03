@@ -53,6 +53,14 @@ A staleness check goes after **every** `await` in every branch (including
 The synchronous tail (native-render branch) needs no check — it can't be
 interleaved.
 
+**Repro / verification recipe.** The race itself is timing-dependent, but the
+symptom is deterministic to check: rapidly Alt+Left/Alt+Right through a folder
+of markdown files, then compare the title bar against
+`%LOCALAPPDATA%\ArtifactViewer\current.txt`. Any disagreement is the bug.
+After the generation-counter fix, disagreement is impossible — re-run the same
+sweep to confirm. To widen the race window while testing, use large `.md`
+files (the `ReadTextWithRetry` await is the main interleave point).
+
 **Review question for Opus:** should the early state writes
 (`WriteCurrentDocState` / `WriteTabsState`, currently before the ext dispatch)
 move to *after* the successful navigate, so `current.txt` never claims a doc
@@ -105,6 +113,25 @@ guards re-entrancy across `await`s. A write that lands before the loop's final
 queues a fresh dispatcher callback, which runs after the current work item
 completes — by which point the `finally` has already cleared the latch
 (no `await` between the last check and the `finally`). No remaining window.
+
+**Repro / verification recipe.** This one reproduces without timing luck if
+the first command is slow. From PowerShell, with a couple of artifacts (`a.md`,
+`b.md`) in the watch folder:
+
+```powershell
+$cmd = "$env:LOCALAPPDATA\ArtifactViewer\command.txt"
+Set-Content $cmd 'pdf'            # slow command: render-settle wait + print
+Start-Sleep -Milliseconds 300     # let processing start, then land a second
+Set-Content $cmd 'show b.md'      # command while the latch is held
+Start-Sleep 5
+Get-Content "$env:LOCALAPPDATA\ArtifactViewer\command-result.txt"
+```
+
+Today: `command-result.txt` still shows the `pdf` result, `b.md` is never
+shown, and `command.txt` is left sitting on disk unprocessed — that's the
+drop. After the loop fix: `b.md` is showing, the result file records the
+`show`, and `command.txt` is gone. Run it a few times; the pre-fix drop is
+near-certain because the `pdf` path awaits render settling for seconds.
 
 Guard against a malformed/empty file spinning the loop: the
 `string.IsNullOrEmpty → continue` path re-checks `File.Exists`, and the file

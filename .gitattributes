@@ -1,0 +1,6 @@
+# Normalize line endings for our own sources
+* text=auto
+
+# Vendored third-party libraries must stay byte-identical to what was
+# downloaded, so anyone can verify them against the upstream file.
+assets/lib/** -text

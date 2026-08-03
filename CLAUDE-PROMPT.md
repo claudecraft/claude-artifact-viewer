@@ -32,15 +32,16 @@ no other action needed. If the app isn't running, launch it first:
 
 **Supported formats:**
 - **Markdown** (`.md`) — GitHub-style rendering with syntax-highlighted code
-  blocks and ```mermaid diagram fences (both CDN-based, need internet). Prefer
-  this for reports and summaries.
+  blocks and ```mermaid diagram fences (both work offline). Prefer this for
+  reports and summaries.
 - **HTML** (`.html`) — full Chromium, JavaScript and CDN scripts allowed.
   Prefer this for dashboards, charts, and interactive content. Dark background
   suggested (the viewer chrome is dark).
 - **PDF, SVG, PNG/JPG/GIF/WebP, txt, json** — rendered natively.
 - **Word (`.docx`) / Excel (`.xlsx`)** — rendered via CDN libraries (needs
   internet). Fine for viewing dropped files; prefer md/html for what you author.
-- **CSV/TSV** — rendered as a table. Good for tabular query results/exports.
+- **CSV/TSV** — rendered as a table (parsed in-app, handles quoted fields with
+  commas and newlines). Good for tabular query results/exports.
 - **Code, config, and log files** (`.py` `.js` `.ts` `.cs` `.sql` `.yaml`
   `.log` `.ps1` `.sh` and more) — syntax-highlighted. Useful for showing a
   script or log excerpt as a deliverable.
@@ -66,9 +67,24 @@ ok/error, detail). Commands:
   watch folder; reopens a closed tab). Use when telling the user "see <file>".
 - `scroll-to <heading-or-#id>` — scroll the current artifact to a heading
   (case-insensitive substring) or anchor id. Use with "look at section X".
+- `pdf [pdf-path]` — export the currently rendered artifact to PDF, defaulting
+  to the same name beside the source. Use when I ask for a PDF, or for something
+  to send/share. Prints the live render through a print stylesheet (light page,
+  repeating table headers, page numbers), so the PDF matches what's on screen.
+  Never prompts. Not available for `.pdf`/audio/video artifacts. I can do the
+  same by right-clicking the tab → *Export to PDF…*.
+- `focus [file]` — raise the viewer window, optionally showing a file on the
+  way. Use when the viewer is likely buried behind an editor and I need to look
+  at something. Note: launching the exe again does *not* focus the running
+  window, it starts a second instance (intentional — two watch folders at once).
 
 After sending a command, wait ~1–2 seconds and read `command-result.txt` to
 confirm it worked.
+
+**Verifying your own output:** `capture` screenshots the render, so you can check
+a chart or table actually looks right before telling me it's done. To inspect an
+exported PDF the same way, `show` it and then `capture` — the viewer renders PDFs
+natively.
 
 **Conventions:**
 - Use short, descriptive kebab-case filenames (`db-schema-diagram.md`,

@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -39,6 +40,8 @@ public partial class MainWindow : Window
         new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
 
     private string _watchDir;
+    private bool _watchDirFromArgs; // per-launch override; suppresses first-run seeding
+    private string? _initialFile;   // file passed on the command line, selected after the first scan
     private readonly string _renderDir;
     private readonly string _settingsPath;
     private readonly string _appDataDir;
@@ -55,7 +58,40 @@ public partial class MainWindow : Window
     private string ResolveWatchDir(string[] args)
     {
         // Command-line arg is a per-launch override and is not persisted
-        if (args.Length > 1) return System.IO.Path.GetFullPath(args[1]);
+        if (args.Length > 1)
+        {
+            // Malformed paths (invalid characters, over-long) throw here rather
+            // than taking the app down before a window ever exists
+            try
+            {
+                var arg = System.IO.Path.GetFullPath(args[1]);
+
+                // A file argument — "ArtifactViewer.exe report.md" — means "show me
+                // this": watch the folder it lives in and select it once scanned.
+                // Treating it as a folder used to throw on CreateDirectory.
+                if (File.Exists(arg))
+                {
+                    _initialFile = arg;
+                    var parent = System.IO.Path.GetDirectoryName(arg);
+                    if (!string.IsNullOrEmpty(parent))
+                    {
+                        _watchDirFromArgs = true;
+                        return parent;
+                    }
+                }
+                else
+                {
+                    // Folder, existing or to be created. Created here rather than
+                    // left to the caller so an unusable path (.NET's GetFullPath
+                    // accepts '?' and '|', which CreateDirectory then rejects)
+                    // fails inside this try instead of taking the app down.
+                    Directory.CreateDirectory(arg);
+                    _watchDirFromArgs = true;
+                    return arg;
+                }
+            }
+            catch (Exception) { /* unusable argument — fall back to the configured folder */ }
+        }
 
         var configured = LoadSetting("watchDir");
         if (configured is not null)
@@ -77,6 +113,71 @@ public partial class MainWindow : Window
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "claude_artifacts");
         SaveSetting("watchDir", fallback);
         return fallback;
+    }
+
+    // Bump when a vendored library is replaced — mismatched stamp re-extracts
+    private const string VendoredLibsStamp = "mermaid-11.16.0 hljs-11.9.0";
+
+    private static readonly string[] VendoredLibs =
+        { "mermaid.min.js", "highlight.min.js", "highlight-dark.min.css" };
+
+    /// <summary>
+    /// Unpacks the vendored render libraries into the render folder, where the
+    /// generated pages load them from as same-origin files. Replaces what used to
+    /// be CDN script tags: works offline, and a PDF export can't race a download.
+    /// </summary>
+    private void ExtractVendoredLibs()
+    {
+        var stampPath = System.IO.Path.Combine(_renderDir, "libs.stamp");
+        try
+        {
+            if (File.Exists(stampPath) &&
+                File.ReadAllText(stampPath) == VendoredLibsStamp) return;
+
+            var asm = System.Reflection.Assembly.GetExecutingAssembly();
+            foreach (var name in VendoredLibs)
+            {
+                using var resource = asm.GetManifestResourceStream(name);
+                if (resource is null) continue;
+                using var file = new FileStream(
+                    System.IO.Path.Combine(_renderDir, name), FileMode.Create, FileAccess.Write);
+                resource.CopyTo(file);
+            }
+            File.WriteAllText(stampPath, VendoredLibsStamp);
+        }
+        catch (Exception)
+        {
+            // Degrades to unhighlighted code and a diagram error banner rather
+            // than taking startup down
+        }
+    }
+
+    /// <summary>
+    /// Drops a welcome document into the watch folder the first time the app runs,
+    /// so a new user has something rendered to look at instead of an empty window.
+    /// Strictly once: deleting it must not bring it back.
+    /// </summary>
+    private void SeedWelcomeArtifact()
+    {
+        if (_watchDirFromArgs) return;          // don't write into a folder the user just pointed at
+        if (LoadSetting("seeded") == "true") return;
+
+        // Flagged before writing: if this fails, it shouldn't retry on every launch
+        SaveSetting("seeded", "true");
+
+        try
+        {
+            var dst = System.IO.Path.Combine(_watchDir, "welcome.md");
+            if (File.Exists(dst)) return;      // never clobber a file already there
+
+            using var resource = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("welcome.md");
+            if (resource is null) return;
+
+            using var file = new FileStream(dst, FileMode.CreateNew, FileAccess.Write);
+            resource.CopyTo(file);
+        }
+        catch (Exception) { /* a first-run nicety is never worth failing startup over */ }
     }
 
     private string? LoadSetting(string key)
@@ -129,6 +230,18 @@ public partial class MainWindow : Window
     private string? _renderedPath;
     private DateTime _renderedWrite;
 
+    // Rendering is asynchronous inside the page (highlight.js, mermaid, the CDN
+    // office/csv renderers), so a PDF export has to wait for it to settle.
+    // Pages we generate post 'render-done'; anything Chromium renders natively
+    // (images, PDFs, user-authored HTML) only gives us NavigationCompleted.
+    private TaskCompletionSource<bool>? _renderSignal;
+    private TaskCompletionSource<bool>? _navSignal;
+    private bool _expectRenderSignal;
+
+    // Printing these to PDF is either meaningless or a lossy round-trip
+    private static readonly string[] NonPrintableExtensions =
+        { ".pdf", ".mp4", ".webm", ".mp3", ".wav" };
+
     public MainWindow()
     {
         InitializeComponent();
@@ -149,6 +262,11 @@ public partial class MainWindow : Window
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ArtifactViewer", "closed-tabs.json");
         LoadClosed();
 
+        ExtractVendoredLibs();
+
+        // Before the first Rescan, so it's simply there as the newest artifact
+        SeedWelcomeArtifact();
+
         TabStrip.ItemsSource = _files;
         SideList.ItemsSource = _allFiles;
         Loaded += MainWindow_Loaded;
@@ -158,8 +276,19 @@ public partial class MainWindow : Window
     {
         var userData = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ArtifactViewer");
-        var env = await CoreWebView2Environment.CreateAsync(null, userData);
-        await Web.EnsureCoreWebView2Async(env);
+        try
+        {
+            var env = await CoreWebView2Environment.CreateAsync(null, userData);
+            await Web.EnsureCoreWebView2Async(env);
+        }
+        catch (Exception ex)
+        {
+            // The one failure a fresh install plausibly hits: WebView2 ships with
+            // Windows 11 and most 10s, but not all. Without this the window just
+            // comes up blank and unexplained.
+            ShowStartupFailure(ex);
+            return;
+        }
 
         Web.CoreWebView2.SetVirtualHostNameToFolderMapping(
             VirtualHost, _watchDir, CoreWebView2HostResourceAccessKind.Allow);
@@ -182,12 +311,56 @@ public partial class MainWindow : Window
             }, true);
             """);
         Web.CoreWebView2.WebMessageReceived += Web_WebMessageReceived;
+        Web.CoreWebView2.NavigationCompleted += (_, _) => _navSignal?.TrySetResult(true);
 
         _webReady = true;
 
         StartWatcher();
         StartCommandWatcher();
         Rescan(selectLatest: true);
+
+        if (_initialFile is not null)
+        {
+            // CmdShow already handles reopening a closed tab and selecting it
+            try { CmdShow(_initialFile); }
+            catch (Exception) { /* unsupported type, or deleted between launch and scan */ }
+            _initialFile = null;
+        }
+    }
+
+    private const string WebView2DownloadUrl =
+        "https://developer.microsoft.com/microsoft-edge/webview2/";
+
+    /// <summary>
+    /// Explains a WebView2 initialization failure in the window itself, and offers
+    /// the download page when the runtime is simply missing.
+    /// </summary>
+    private void ShowStartupFailure(Exception ex)
+    {
+        var missingRuntime = ex is WebView2RuntimeNotFoundException;
+
+        Web.Visibility = Visibility.Collapsed;
+        TxtEmpty.Visibility = Visibility.Visible;
+        TxtEmpty.Text = missingRuntime
+            ? "The Microsoft Edge WebView2 runtime isn't installed.\n\n" +
+              "Artifact Viewer uses it to render artifacts.\n" +
+              $"Install the Evergreen runtime from\n{WebView2DownloadUrl}\nthen restart this app."
+            : $"WebView2 failed to start.\n\n{ex.Message}";
+        TxtTitle.Text = missingRuntime ? "WebView2 runtime required" : "WebView2 failed to start";
+
+        if (!missingRuntime) return;
+
+        var answer = MessageBox.Show(this,
+            "Artifact Viewer needs the Microsoft Edge WebView2 runtime, which isn't " +
+            "installed on this PC.\n\nOpen the download page now?",
+            "WebView2 runtime required", MessageBoxButton.YesNo, MessageBoxImage.Information);
+        if (answer != MessageBoxResult.Yes) return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(WebView2DownloadUrl) { UseShellExecute = true });
+        }
+        catch (Exception) { /* no default browser — the URL is on screen anyway */ }
     }
 
     // ---------- Watching ----------
@@ -310,8 +483,9 @@ public partial class MainWindow : Window
     }
 
     // ---------- Control channel (Claude Code drives the viewer via command.txt) ----------
-    // Write "capture [png-path]" | "show <file>" | "scroll-to <heading-or-#id>" to
-    // %LOCALAPPDATA%\ArtifactViewer\command.txt; the outcome lands in command-result.txt.
+    // Write "capture [png-path]" | "show <file>" | "scroll-to <heading-or-#id>" |
+    // "pdf [pdf-path]" to %LOCALAPPDATA%\ArtifactViewer\command.txt; the outcome
+    // lands in command-result.txt.
 
     private void StartCommandWatcher()
     {
@@ -353,7 +527,10 @@ public partial class MainWindow : Window
                     "capture" => await CmdCapture(arg),
                     "show" => CmdShow(arg),
                     "scroll-to" => await CmdScrollTo(arg),
-                    _ => throw new InvalidOperationException($"unknown command '{verb}' (capture | show | scroll-to)")
+                    "pdf" => await CmdPdf(arg),
+                    "focus" => CmdFocus(arg),
+                    _ => throw new InvalidOperationException(
+                        $"unknown command '{verb}' (capture | show | scroll-to | pdf | focus)")
                 };
             }
             catch (Exception ex)
@@ -383,6 +560,43 @@ public partial class MainWindow : Window
         using (var stream = new FileStream(output, FileMode.Create, FileAccess.Write))
             await Web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream);
         return output;
+    }
+
+    /// <summary>Raises the window. Optional arg shows that artifact first.</summary>
+    private string CmdFocus(string arg)
+    {
+        var shown = string.IsNullOrEmpty(arg) ? null : CmdShow(arg);
+
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+
+        if (!IsActive)
+        {
+            // Windows refuses SetForegroundWindow to a process that doesn't own the
+            // foreground; a brief topmost flip is the usual way through it. Restores
+            // whatever the 📌 pin was set to rather than clobbering it.
+            var pinned = Topmost;
+            Topmost = true;
+            Topmost = pinned;
+            Activate();
+        }
+
+        var state = IsActive ? "focused" : "raised (foreground lock — taskbar flash only)";
+        return shown is null ? state : $"{state}: {shown}";
+    }
+
+    private async Task<string> CmdPdf(string arg)
+    {
+        if (!_webReady || _renderedPath is null) throw new InvalidOperationException("nothing rendered yet");
+        var entry = _scanned.FirstOrDefault(f =>
+            string.Equals(f.Path, _renderedPath, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("the current artifact is no longer on disk");
+
+        // Unlike the menu, the control channel never prompts — default beside the source
+        var output = string.IsNullOrEmpty(arg)
+            ? System.IO.Path.ChangeExtension(_renderedPath, ".pdf")
+            : arg;
+        return await ExportPdf(entry, output) ?? throw new InvalidOperationException("export cancelled");
     }
 
     private string CmdShow(string arg)
@@ -425,6 +639,95 @@ public partial class MainWindow : Window
             """);
         if (result.Contains("not-found")) throw new InvalidOperationException($"no heading or anchor matching '{arg}'");
         return $"scrolled to '{arg}'";
+    }
+
+    // ---------- PDF export ----------
+    // Prints the live render through the page's @media print rules. No external
+    // tooling: WebView2 already is the Chromium that would otherwise be shelled out to.
+
+    /// <summary>Waits for the current artifact to finish rendering before it's printed.</summary>
+    private async Task WaitForRenderAsync()
+    {
+        var primary = _expectRenderSignal ? _renderSignal : _navSignal;
+        if (primary is not null)
+        {
+            // CDN-backed renderers (mermaid, docx-preview) can be slow or, offline,
+            // never finish. Printing a partial page beats hanging on the export.
+            var budget = TimeSpan.FromSeconds(_expectRenderSignal ? 12 : 5);
+            await Task.WhenAny(primary.Task, Task.Delay(budget));
+        }
+        await Task.Delay(150); // let layout settle after the last script mutation
+    }
+
+    /// <summary>
+    /// Exports an artifact to PDF. <paramref name="outputPath"/> null prompts for a
+    /// destination; the control channel passes one. Returns null if cancelled.
+    /// </summary>
+    private async Task<string?> ExportPdf(FileEntry entry, string? outputPath)
+    {
+        if (!_webReady) throw new InvalidOperationException("viewer not ready yet");
+
+        var ext = System.IO.Path.GetExtension(entry.Path).ToLowerInvariant();
+        if (NonPrintableExtensions.Contains(ext))
+            throw new InvalidOperationException($"{ext} artifacts can't be exported to PDF");
+
+        // PrintToPdfAsync prints what's on screen, so the tab has to be showing
+        if (!string.Equals(_renderedPath, entry.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            var tab = _files.FirstOrDefault(f => f.Path == entry.Path);
+            if (tab is null) throw new InvalidOperationException($"'{entry.Name}' has no open tab to render");
+            TabStrip.SelectedItem = tab;
+        }
+        await WaitForRenderAsync();
+
+        string output;
+        if (outputPath is null)
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Export to PDF",
+                FileName = System.IO.Path.GetFileNameWithoutExtension(entry.Name) + ".pdf",
+                DefaultExt = ".pdf",
+                Filter = "PDF document (*.pdf)|*.pdf",
+                // Defaults into the watch folder so the export lands as its own artifact
+                InitialDirectory = _watchDir,
+                OverwritePrompt = true
+            };
+            if (dlg.ShowDialog(this) != true) return null;
+            output = dlg.FileName;
+        }
+        else
+        {
+            output = System.IO.Path.GetFullPath(outputPath);
+            if (!output.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) output += ".pdf";
+        }
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(output)!);
+
+        var settings = Web.CoreWebView2.Environment.CreatePrintSettings();
+        settings.ShouldPrintBackgrounds = true;  // table shading, code blocks, mermaid fills
+        settings.ShouldPrintHeaderAndFooter = true;
+        settings.HeaderTitle = entry.Name;
+        settings.FooterUri = "";                 // the render.viewer URL is noise; date + page number remain
+        settings.MarginTop = settings.MarginBottom = 0.5;
+        settings.MarginLeft = settings.MarginRight = 0.55;
+
+        if (!await Web.CoreWebView2.PrintToPdfAsync(output, settings))
+            throw new InvalidOperationException("the print job failed");
+        return output;
+    }
+
+    private async void TabExportPdf_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not FileEntry entry) return;
+        try
+        {
+            var output = await ExportPdf(entry, null);
+            if (output is not null) TxtDate.Text = $"exported → {System.IO.Path.GetFileName(output)}";
+        }
+        catch (Exception ex)
+        {
+            TxtDate.Text = $"export failed: {ex.Message}";
+        }
     }
 
     // ---------- Keep (promote to a durable folder) ----------
@@ -484,8 +787,17 @@ public partial class MainWindow : Window
 
     private void Web_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        try { if (e.TryGetWebMessageAsString() != "files-dropped") return; }
+        string message;
+        try { message = e.TryGetWebMessageAsString(); }
         catch (Exception) { return; } // non-string message from page content
+
+        if (message == "render-done")
+        {
+            _renderSignal?.TrySetResult(true);
+            return;
+        }
+        if (message != "files-dropped") return;
+
         var paths = e.AdditionalObjects?.OfType<CoreWebView2File>().Select(f => f.Path).ToArray();
         if (paths is { Length: > 0 }) ImportFiles(paths);
     }
@@ -697,6 +1009,13 @@ public partial class MainWindow : Window
         WriteTabsState();
 
         var ext = System.IO.Path.GetExtension(entry.Path).ToLowerInvariant();
+
+        // Arm the render-settled signals before navigating (see _renderSignal)
+        _expectRenderSignal = ext is ".md" or ".markdown" or ".docx" or ".xlsx" or ".csv" or ".tsv"
+            || CodeExtensions.Contains(ext);
+        _renderSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _navSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
         if (ext is ".md" or ".markdown")
         {
             var text = await ReadTextWithRetry(entry.Path);
@@ -719,10 +1038,10 @@ public partial class MainWindow : Window
         }
         else if (ext is ".csv" or ".tsv")
         {
-            var cached = System.IO.Path.Combine(_renderDir, "current" + ext);
-            if (!await CopyWithRetry(entry.Path, cached)) return;
+            var text = await ReadTextWithRetry(entry.Path);
+            if (text is null) return;
             var page = System.IO.Path.Combine(_renderDir, "csv.html");
-            await File.WriteAllTextAsync(page, BuildCsvHtml(ext, entry.LastWrite.Ticks));
+            await File.WriteAllTextAsync(page, BuildCsvHtml(text, ext == ".tsv" ? '\t' : ','));
             Web.CoreWebView2.Navigate($"https://{RenderHost}/csv.html?v={entry.LastWrite.Ticks}");
         }
         else if (CodeExtensions.Contains(ext))
@@ -741,26 +1060,106 @@ public partial class MainWindow : Window
         }
     }
 
-    private static string BuildCsvHtml(string ext, long ticks) => $$"""
-        <!doctype html><html><head><meta charset="utf-8"><style>
-          body { margin: 0; background: #1E1E1E; color: #d4d4d4; font: 13px system-ui, sans-serif; }
-          #sheet { padding: 12px; overflow: auto; }
-          table { border-collapse: collapse; }
-          td, th { border: 1px solid #3d3d3d; padding: 4px 10px; white-space: nowrap; }
-          tr:first-child td { background: #2d2d2d; font-weight: 600; position: sticky; top: 0; }
-          .err { padding: 40px; text-align: center; }
-        </style></head><body>
-        <div id="sheet"></div>
-        <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-        <script>
-          fetch('current{{ext}}?v={{ticks}}').then(r => r.text()).then(text => {
-            const wb = XLSX.read(text, { type: 'string', FS: '{{(ext == ".tsv" ? "\\t" : ",")}}' });
-            document.getElementById('sheet').innerHTML =
-              XLSX.utils.sheet_to_html(wb.Sheets[wb.SheetNames[0]]);
-          }).catch(e => document.getElementById('sheet').innerHTML =
-            '<div class="err">Could not render file: ' + e + '<br>(csv rendering needs internet for CDN libraries)</div>');
-        </script></body></html>
-        """;
+    /// <summary>Row cap — past this the table stops being readable and starts being slow.</summary>
+    private const int CsvRowLimit = 5000;
+
+    /// <summary>
+    /// Splits delimited text per RFC 4180: quoted fields may contain the delimiter
+    /// and newlines, and "" is a literal quote.
+    /// </summary>
+    private static List<List<string>> ParseDelimited(string text, char delimiter)
+    {
+        var rows = new List<List<string>>();
+        var row = new List<string>();
+        var field = new StringBuilder();
+        var inQuotes = false;
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (inQuotes)
+            {
+                if (c != '"') { field.Append(c); continue; }
+                if (i + 1 < text.Length && text[i + 1] == '"') { field.Append('"'); i++; }
+                else inQuotes = false;
+            }
+            else if (c == '"' && field.Length == 0) inQuotes = true;
+            else if (c == delimiter) { row.Add(field.ToString()); field.Clear(); }
+            else if (c == '\r') { /* handled by the \n that follows */ }
+            else if (c == '\n')
+            {
+                row.Add(field.ToString());
+                field.Clear();
+                rows.Add(row);
+                row = new List<string>();
+            }
+            else field.Append(c);
+        }
+        // Trailing row when the file doesn't end in a newline
+        if (field.Length > 0 || row.Count > 0) { row.Add(field.ToString()); rows.Add(row); }
+        return rows;
+    }
+
+    /// <summary>
+    /// Renders delimited text as a table. Parsed here rather than in the page: it
+    /// used to pull a whole spreadsheet engine off a CDN just to split commas.
+    /// </summary>
+    private static string BuildCsvHtml(string text, char delimiter)
+    {
+        var rows = ParseDelimited(text, delimiter);
+        var truncated = rows.Count > CsvRowLimit;
+        var shown = truncated ? rows.Take(CsvRowLimit).ToList() : rows;
+
+        var table = new StringBuilder();
+        if (shown.Count == 0)
+        {
+            table.Append("<div class=\"err\">This file has no rows.</div>");
+        }
+        else
+        {
+            table.Append("<table><thead><tr>");
+            foreach (var cell in shown[0])
+                table.Append("<th>").Append(System.Net.WebUtility.HtmlEncode(cell)).Append("</th>");
+            table.Append("</tr></thead><tbody>");
+            foreach (var r in shown.Skip(1))
+            {
+                table.Append("<tr>");
+                foreach (var cell in r)
+                    table.Append("<td>").Append(System.Net.WebUtility.HtmlEncode(cell)).Append("</td>");
+                table.Append("</tr>");
+            }
+            table.Append("</tbody></table>");
+        }
+
+        var notice = truncated
+            ? $"<div class=\"note\">Showing the first {CsvRowLimit:N0} of {rows.Count:N0} rows.</div>"
+            : "";
+
+        return $$"""
+            <!doctype html><html><head><meta charset="utf-8"><style>
+              body { margin: 0; background: #1E1E1E; color: #d4d4d4; font: 13px system-ui, sans-serif; }
+              #sheet { padding: 12px; overflow: auto; }
+              table { border-collapse: collapse; }
+              /* pre, not nowrap: keeps the table compact but honours newlines
+                 inside quoted fields instead of flattening them */
+              td, th { border: 1px solid #3d3d3d; padding: 4px 10px; white-space: pre; text-align: left; }
+              th { background: #2d2d2d; font-weight: 600; position: sticky; top: 0; }
+              tbody tr:nth-child(even) { background: #242424; }
+              .err, .note { padding: 12px; color: #9a9a9a; }
+              @media print {
+                body { background: #fff; color: #1a1a1a; }
+                td, th { border-color: #b4b4b4; white-space: pre-wrap; }
+                th { background: #ececec; color: #1a1a1a; }
+                thead { display: table-header-group; }
+                tr { break-inside: avoid; }
+                tbody tr:nth-child(even) { background: #f6f6f6; }
+              }
+            </style></head><body>
+            <div id="sheet">{{notice}}{{table}}</div>
+            <script>chrome.webview.postMessage('render-done');</script>
+            </body></html>
+            """;
+    }
 
     private static readonly Dictionary<string, string> HljsLanguage = new()
     {
@@ -779,7 +1178,7 @@ public partial class MainWindow : Window
         var highlight = text.Length < 500_000;
         return $$"""
             <!doctype html><html><head><meta charset="utf-8">
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+            <link rel="stylesheet" href="highlight-dark.min.css">
             <style>
               body { margin: 0; background: #1E1E1E; }
               pre { margin: 0; padding: 16px 20px; font: 13px/1.5 Consolas, 'Cascadia Mono', monospace;
@@ -787,9 +1186,10 @@ public partial class MainWindow : Window
             </style></head><body>
             <pre><code class="language-{{lang}}">{{System.Net.WebUtility.HtmlEncode(text)}}</code></pre>
             {{(highlight ? """
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-            <script>hljs.highlightAll();</script>
+            <script src="highlight.min.js"></script>
+            <script>try { hljs.highlightAll(); } catch (e) { /* plain text is fine */ }</script>
             """ : "")}}
+            <script>chrome.webview.postMessage('render-done');</script>
             </body></html>
             """;
     }
@@ -829,7 +1229,8 @@ public partial class MainWindow : Window
               fetch('current.docx?v={{ticks}}').then(r => r.arrayBuffer())
                 .then(buf => docx.renderAsync(buf, document.getElementById('doc')))
                 .catch(e => document.getElementById('doc').innerHTML =
-                  '<div class="err">Could not render document: ' + e + '<br>(docx rendering needs internet for CDN libraries)</div>');
+                  '<div class="err">Could not render document: ' + e + '<br>(docx rendering needs internet for CDN libraries)</div>')
+                .finally(() => chrome.webview.postMessage('render-done'));
             </script></body></html>
             """
         : $$"""
@@ -862,7 +1263,8 @@ public partial class MainWindow : Window
                 });
                 show(wb.SheetNames[0]);
               }).catch(e => document.getElementById('sheet').innerHTML =
-                '<div class="err">Could not render spreadsheet: ' + e + '<br>(xlsx rendering needs internet for CDN libraries)</div>');
+                '<div class="err">Could not render spreadsheet: ' + e + '<br>(xlsx rendering needs internet for CDN libraries)</div>')
+                .finally(() => chrome.webview.postMessage('render-done'));
             </script></body></html>
             """;
 
@@ -897,7 +1299,9 @@ public partial class MainWindow : Window
 <head>
 <meta charset="utf-8">
 <base href="https://{{VirtualHost}}/">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<!-- Absolute render-host URLs: the base tag above points relative paths at the
+     watch folder so markdown images resolve, which would otherwise misdirect these. -->
+<link rel="stylesheet" href="https://{{RenderHost}}/highlight-dark.min.css">
 <style>
   :root { color-scheme: dark; }
   body {
@@ -925,34 +1329,93 @@ public partial class MainWindow : Window
   ::-webkit-scrollbar { width: 12px; height: 12px; }
   ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
+
+  /* PDF export (Export to PDF… on the tab's right-click menu) prints through
+     this block: light page, and pagination rules the screen view doesn't need.
+     Page margins come from CoreWebView2PrintSettings, not @page. */
+  @media print {
+    :root { color-scheme: light; }
+    body { background: #fff; color: #1a1a1a; max-width: none; margin: 0; padding: 0;
+           font-size: 10.5pt; line-height: 1.5; }
+    h1, h2, h3, h4 { color: #12395c; break-after: avoid; }
+    h1 { border-bottom-color: #c4c4c4; }
+    h2 { border-bottom-color: #dcdcdc; }
+    a { color: #14507d; }
+    blockquote { color: #40464d; border-left-color: #0e6fa0; }
+    code { background: #f1f1f1; color: #1a1a1a; }
+    pre { background: #f7f7f7; border-color: #dcdcdc; break-inside: avoid; }
+    figure, img { break-inside: avoid; }
+    hr { border-top-color: #c4c4c4; }
+    /* The screen rule is display:block for horizontal scrolling, which stops
+       tables paginating and stops header rows repeating. */
+    table { display: table; width: 100%; overflow: visible; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    th, td { border-color: #b4b4b4; }
+    th { background: #ececec; color: #1a1a1a; }
+    tr:nth-child(even) { background: #f6f6f6; }
+    /* highlight.js is loaded with a dark theme; restate the tokens as light
+       ones so code doesn't print pale-on-white. Self-contained: no second CDN
+       stylesheet to race with the print job. */
+    .hljs { background: #f7f7f7; color: #24292e; }
+    .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-section { color: #b31d28; }
+    .hljs-string, .hljs-attr, .hljs-addition, .hljs-meta-string { color: #032f62; }
+    .hljs-comment, .hljs-quote { color: #6a737d; }
+    .hljs-number, .hljs-built_in, .hljs-type, .hljs-selector-attr { color: #005cc5; }
+    .hljs-title, .hljs-name, .hljs-attribute { color: #6f42c1; }
+    /* Mermaid renders with theme:'dark'. Node boxes carry their own fills and
+       survive on a white page, but loose label text is styled for a dark
+       background and prints nearly invisible. */
+    .mermaid .messageText, .mermaid .loopText, .mermaid .loopText tspan,
+    .mermaid .labelText, .mermaid .labelText tspan,
+    .mermaid .edgeLabel text, .mermaid .edgeLabel tspan,
+    .mermaid .titleText, .mermaid .sectionTitle, .mermaid .taskText {
+      fill: #1a1a1a !important; color: #1a1a1a !important;
+    }
+    .mermaid .edgeLabel rect, .mermaid .labelBkg, .mermaid .edgeLabel .labelBkg {
+      fill: #ffffff !important; background-color: #ffffff !important; opacity: 1 !important;
+    }
+    .mermaid .messageLine0, .mermaid .messageLine1 { stroke: #555 !important; }
+  }
 </style>
 </head>
 <body>
 {{body}}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-<script type="module">
-  document.querySelectorAll('pre code:not(.language-mermaid)').forEach(el => hljs.highlightElement(el));
-  // Turn ```mermaid fences into rendered diagrams
-  try {
-    // Markdig's diagram extension already emits <div class="mermaid">; plain
-    // renderers emit <pre><code class="language-mermaid">. Normalize the latter.
-    document.querySelectorAll('pre > code.language-mermaid').forEach(code => {
-      const div = document.createElement('div');
-      div.className = 'mermaid';
-      div.textContent = code.textContent;
-      code.parentElement.replaceWith(div);
-    });
-    if (document.querySelector('.mermaid')) {
-      const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
-      mermaid.initialize({ startOnLoad: false, theme: 'dark' });
-      await mermaid.run();
+<script src="https://{{RenderHost}}/highlight.min.js"></script>
+<script src="https://{{RenderHost}}/mermaid.min.js"></script>
+<script>
+  // Everything inside one guarded block: whatever fails, 'render-done' must
+  // still fire or a PDF export sits waiting on it.
+  (async () => {
+    try {
+      document.querySelectorAll('pre code:not(.language-mermaid)').forEach(el => hljs.highlightElement(el));
+    } catch (err) { /* unhighlighted code is still readable */ }
+
+    try {
+      // Markdig's diagram extension already emits <div class="mermaid">; plain
+      // renderers emit <pre><code class="language-mermaid">. Normalize the latter.
+      document.querySelectorAll('pre > code.language-mermaid').forEach(code => {
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = code.textContent;
+        code.parentElement.replaceWith(div);
+      });
+      if (document.querySelector('.mermaid')) {
+        // The vendored bundle assigns globalThis.mermaid on load
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+        await mermaid.run();
+      }
+    } catch (err) {
+      const banner = document.createElement('div');
+      banner.style.cssText = 'background:#5a1d1d;color:#ffb3b3;padding:10px 16px;border-radius:8px;margin:12px 0;font-family:monospace;white-space:pre-wrap;';
+      banner.textContent = 'mermaid failed: ' + (err && err.message ? err.message : err);
+      document.body.prepend(banner);
     }
-  } catch (err) {
-    const banner = document.createElement('div');
-    banner.style.cssText = 'background:#5a1d1d;color:#ffb3b3;padding:10px 16px;border-radius:8px;margin:12px 0;font-family:monospace;white-space:pre-wrap;';
-    banner.textContent = 'mermaid failed: ' + (err && err.message ? err.message : err);
-    document.body.prepend(banner);
-  }
+
+    // Tells the host that highlighting and diagrams are done, so a PDF export
+    // doesn't print half-rendered content.
+    chrome.webview.postMessage('render-done');
+  })();
 </script>
 </body>
 </html>

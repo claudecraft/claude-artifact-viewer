@@ -149,6 +149,21 @@
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal">
+                        <StackPanel.ContextMenu>
+                            <!-- DataContext is inherited from the placement target, so the
+                                 handlers read the tab's FileEntry the same way the × does -->
+                            <ContextMenu Background="#2D2D30" BorderBrush="#3F3F46">
+                                <ContextMenu.Resources>
+                                    <Style TargetType="MenuItem">
+                                        <Setter Property="Foreground" Value="#D4D4D4"/>
+                                        <Setter Property="Padding" Value="6,4"/>
+                                    </Style>
+                                </ContextMenu.Resources>
+                                <MenuItem Header="Export to PDF…" Click="TabExportPdf_Click"/>
+                                <Separator/>
+                                <MenuItem Header="Close tab" Click="TabClose_Click"/>
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
                         <TextBlock Text="{Binding Name}" FontSize="12" VerticalAlignment="Center"/>
                         <Button Click="TabClose_Click" ToolTip="Close (hides until rewritten)"
                                 Content="&#x2715;" FontSize="9" Margin="7,0,0,0" Padding="3,1"

@@ -20,9 +20,13 @@ table to terminal scrollback.
   images (png/jpg/gif/webp/bmp/ico/avif), txt, json, **video/audio**
   (mp4/webm/mp3/wav), **Word (.docx) and Excel (.xlsx)** via
   docx-preview/SheetJS (CDN-based, no Office install needed; multi-sheet
-  workbooks get sheet tabs), **CSV/TSV** as tables, and **source/config/log
+  workbooks get sheet tabs), **CSV/TSV** as tables (RFC 4180 parsing, so quoted
+  fields containing commas and newlines survive), and **source/config/log
   files** (.py .js .ts .cs .sql .yaml .log .ps1 and ~20 more) with syntax
   highlighting
+- **Works offline** — mermaid and highlight.js are bundled into the exe, not
+  fetched from a CDN, so markdown, diagrams and code render on a plane and a
+  release renders identically forever. Only Word/Excel reach the network.
 - **Tabs** — one per file, ordered oldest → newest; hover for a ✕ that hides
   the tab without touching the file. Closed state persists across restarts;
   a closed file reopens automatically if it's rewritten.
@@ -43,11 +47,22 @@ table to terminal scrollback.
   list to `tabs.json`, so telling Claude Code "look at the current doc" or
   "copy all open tabs somewhere" just works (the included
   [CLAUDE-PROMPT.md](CLAUDE-PROMPT.md) teaches it the conventions)
+- **Export to PDF** — right-click a tab → *Export to PDF…*. Prints the live
+  render through a print stylesheet (light page, repeating table headers, page
+  numbers in the footer), so what you hand someone matches what you were
+  looking at. No Python, no LaTeX, no pandoc — the viewer already hosts the
+  Chromium that does the printing. Skipped for artifacts where it's meaningless
+  (`.pdf`, audio, video).
 - **Claude can drive the viewer** — a file-based control channel
   (`%LOCALAPPDATA%\ArtifactViewer\command.txt` → `command-result.txt`) with
-  three commands: `capture <png-path>` screenshots the current render (Claude
+  five commands: `capture <png-path>` screenshots the current render (Claude
   can verify the chart it just wrote actually looks right), `show <file>`
-  brings an artifact on screen, `scroll-to <heading>` jumps to a section
+  brings an artifact on screen, `scroll-to <heading>` jumps to a section,
+  `pdf [pdf-path]` exports the current artifact (defaults to the same name
+  beside the source; never prompts), and `focus [file]` raises the window —
+  optionally showing a file on the way — for when the viewer is behind your
+  editor. Relaunching the exe won't do this: it starts a second instance,
+  deliberately, so you can watch two folders at once.
 - **Live reload** — editing the shown file re-renders it; a new file
   auto-displays only if you're already viewing the latest (browsing history
   never gets interrupted)
@@ -56,14 +71,41 @@ table to terminal scrollback.
 
 ## Getting started
 
-Requirements: Windows 10/11, [.NET 10 SDK](https://dotnet.microsoft.com/download)
-(or Desktop Runtime to run a published build), WebView2 runtime (preinstalled
-on Windows 11).
+### Download (no toolchain needed)
+
+Grab **ArtifactViewer.exe** from the
+[latest release](https://github.com/claudecraft/claude-artifact-viewer/releases/latest)
+and run it. One file, ~62 MB, self-contained — no .NET install, nothing to
+unzip, and nothing written outside your user folder (settings live in
+`%LOCALAPPDATA%\ArtifactViewer\`).
+
+The download isn't code-signed, so Windows shows *"Windows protected your PC"*
+the first time: **More info → Run anyway**. Signing certificates require a
+verified legal identity this project doesn't have. Each release is built from its
+tag by [the release workflow](.github/workflows/release.yml) on a GitHub runner,
+so you can check the build rather than trust the binary — or build it yourself
+below.
+
+Windows 10 or 11, plus the Microsoft Edge **WebView2 runtime** — preinstalled on
+Windows 11 and most Windows 10 machines. If it's missing, the app tells you and
+offers the download page instead of failing silently.
+
+### Build from source
+
+Requirements: Windows 10/11, [.NET 10 SDK](https://dotnet.microsoft.com/download),
+WebView2 runtime.
 
 ```
 git clone https://github.com/claudecraft/claude-artifact-viewer
 cd claude-artifact-viewer
 dotnet run
+```
+
+To produce the same single-file exe the releases ship (settings are in the
+csproj, so no extra switches):
+
+```
+dotnet publish -c Release -r win-x64
 ```
 
 By default it watches `Documents\claude_artifacts` (created automatically).
@@ -76,6 +118,16 @@ without persisting:
 ```
 ArtifactViewer.exe C:\some\folder
 ```
+
+Pass a **file** instead and it watches that file's folder and opens it selected:
+
+```
+ArtifactViewer.exe C:\some\folder\report.md
+```
+
+Each launch is its own instance — two folders side by side is supported, so
+running the exe again won't raise an existing window (use the `focus` command
+for that).
 
 ## Teaching Claude Code to use it
 
@@ -142,10 +194,17 @@ If it appears in the folder, it gets a tab.
 - Non-markdown files are served through a WebView2 virtual host mapped to the
   watch folder, so Chromium renders them natively and relative asset paths work.
 - Markdown is rendered to a cache file (`%LOCALAPPDATA%\ArtifactViewer\render`)
-  served via a second virtual host — `NavigateToString`'s `about:blank` origin
-  breaks mermaid's dynamic ESM import (ask me how I know).
-- highlight.js and mermaid load from CDN, so those need internet; everything
-  else works offline.
+  served via a second virtual host, so the page has a real origin rather than
+  `NavigateToString`'s `about:blank`.
+- mermaid and highlight.js are embedded as resources and unpacked into that same
+  render folder at startup, then loaded as same-origin files. Vendored rather
+  than CDN-loaded for three reasons: offline rendering, no network fetch racing
+  a PDF export, and a release that renders the same way in five years. Note that
+  mermaid's ESM entry can't be vendored as one file — it lazy-imports a
+  `chunks/` tree — so the UMD build is used, which sets `globalThis.mermaid`.
+  See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) to update a version.
+- CSV/TSV is parsed in C# rather than in the page; it previously loaded SheetJS
+  (860 KB) from a CDN to split commas.
 - Closed-tab state lives in `%LOCALAPPDATA%\ArtifactViewer\closed-tabs.json`.
 
 ## License

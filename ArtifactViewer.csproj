@@ -11,8 +11,44 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- Shown in the exe's Properties → Details, so it's set explicitly rather
+       than defaulting to the assembly name. Keep it project-identity only. -->
+  <PropertyGroup>
+    <Product>Artifact Viewer</Product>
+    <Company>claude-artifact-viewer contributors</Company>
+    <Copyright>MIT — claude-artifact-viewer contributors</Copyright>
+    <Description>Local folder-watching artifact renderer for Claude Code.</Description>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <!-- Single-file release defaults, so `dotnet publish -c Release -r win-x64`
+       produces the one-file download with no extra switches.
+       PublishTrimmed is deliberately absent: unsupported for WPF, and it
+       breaks XAML reflection at runtime. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <SelfContained>true</SelfContained>
+    <DebugType>none</DebugType>
+    <!-- Without this, the WebView2 packages' IntelliSense .xml files publish
+         alongside the exe and it stops being a one-file download. -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+  </PropertyGroup>
+
   <ItemGroup>
     <Resource Include="app.ico" />
+    <!-- Seeded into the watch folder on first run. Embedded with an explicit
+         logical name so the single-file exe carries it and lookup doesn't
+         depend on namespace-mangled resource paths. -->
+    <EmbeddedResource Include="assets\welcome.md" LogicalName="welcome.md" />
+    <!-- Vendored render libraries, extracted to the render folder at startup.
+         Local rather than CDN so rendering works offline, doesn't stall a PDF
+         export waiting on a network fetch, and can't change under us.
+         See THIRD-PARTY-NOTICES.md for licences. -->
+    <EmbeddedResource Include="assets\lib\mermaid.min.js" LogicalName="mermaid.min.js" />
+    <EmbeddedResource Include="assets\lib\highlight.min.js" LogicalName="highlight.min.js" />
+    <EmbeddedResource Include="assets\lib\highlight-dark.min.css" LogicalName="highlight-dark.min.css" />
   </ItemGroup>
 
   <ItemGroup>

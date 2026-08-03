@@ -1,0 +1,64 @@
+# Builds the one-file download.
+#
+# Runs on a clean GitHub runner rather than a developer machine, so the binary
+# embeds no local source paths and the release is reproducible from the tag alone.
+# Needs no secrets: the built-in GITHUB_TOKEN is enough to create the release.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:   # build without releasing, to check the publish still works
+
+permissions:
+  contents: write      # only for creating the release; nothing else is needed
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Single-file settings live in the csproj Release PropertyGroup.
+      # ContinuousIntegrationBuild normalizes any remaining source paths.
+      - name: Publish self-contained single file
+        run: >
+          dotnet publish ArtifactViewer.csproj
+          -c Release -r win-x64
+          -p:ContinuousIntegrationBuild=true
+          -o publish
+
+      - name: Report artifact size
+        shell: pwsh
+        run: |
+          $exe = Get-Item publish/ArtifactViewer.exe
+          "{0} - {1:N1} MB" -f $exe.Name, ($exe.Length / 1MB)
+          $extra = Get-ChildItem publish -File | Where-Object Name -ne 'ArtifactViewer.exe'
+          if ($extra) {
+            $extra | Select-Object Name, Length
+            throw "publish produced loose files alongside the exe; single-file packaging is broken"
+          }
+
+      # Non-tag runs keep the exe as a build artifact for inspection
+      - name: Upload build artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtifactViewer-exe
+          path: publish/ArtifactViewer.exe
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${{ github.ref_name }}"
+          publish/ArtifactViewer.exe
+          --title "Artifact Viewer ${{ github.ref_name }}"
+          --notes-file .github/release-notes.md

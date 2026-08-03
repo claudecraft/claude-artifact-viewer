@@ -410,6 +410,9 @@ public partial class MainWindow : Window
             if (current is null || latest <= current) return;
 
             TxtUpdate.Text = $"Version {tag} is available — you have v{current.ToString(3)}.";
+            BtnUpdateReveal.ToolTip = Environment.ProcessPath is { Length: > 0 } exe
+                ? $"Show the running program in Explorer, so you know which file to replace:\n{exe}"
+                : "Show the running program in Explorer";
             UpdateBanner.Visibility = Visibility.Visible;
         }
         catch (Exception)
@@ -425,6 +428,22 @@ public partial class MainWindow : Window
             Process.Start(new ProcessStartInfo(ReleasesPageUrl) { UseShellExecute = true });
         }
         catch (Exception) { /* no default browser */ }
+    }
+
+    /// <summary>
+    /// Opens Explorer with the running executable selected. Updating means replacing
+    /// that file, and someone who downloaded the exe months ago has no idea where it
+    /// went — a second copy in Downloads is the usual outcome otherwise.
+    /// </summary>
+    private void BtnUpdateReveal_Click(object sender, RoutedEventArgs e)
+    {
+        var exe = Environment.ProcessPath;
+        try
+        {
+            if (!string.IsNullOrEmpty(exe) && File.Exists(exe))
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{exe}\"") { UseShellExecute = true });
+        }
+        catch (Exception) { /* Explorer unavailable — the tooltip still shows the path */ }
     }
 
     private void BtnUpdateDismiss_Click(object sender, RoutedEventArgs e) =>

@@ -17,6 +17,30 @@ project doesn't have. If you'd rather not take our word for it, the exe is built
 from this tag by [the release workflow](../../actions/workflows/release.yml) on a
 GitHub runner, or you can clone and `dotnet run` yourself.
 
+### Already running an older version?
+
+This download is a **separate copy** of the program, so there's one step the
+browser won't do for you: put it where the old one lives.
+
+1. In Artifact Viewer, the update notice has a **Show current file** button — it
+   opens the folder containing the version you're running, with the file
+   selected. (No notice on screen? The program is wherever you saved it, often
+   `Downloads`.)
+2. Close Artifact Viewer.
+3. Drag this download into that folder, replacing the old `ArtifactViewer.exe`
+   when Windows asks.
+
+Two things worth knowing. If you download into the folder that already has the
+old copy, your browser will name it `ArtifactViewer (1).exe` rather than
+overwrite — the numbered one is the *new* one, so replace the old file with it
+and delete the leftover. And if you've pinned Artifact Viewer to the taskbar or
+made a desktop shortcut, that shortcut points at the old file's location, which
+is why replacing in place matters: do it any other way and you'll keep launching
+the old version and keep seeing the update notice.
+
+Your settings, watched folder and tab state live in `%LOCALAPPDATA%` and carry
+over untouched.
+
 ### Requirements
 
 - Windows 10 or 11

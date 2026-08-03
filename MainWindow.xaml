@@ -217,6 +217,11 @@
                         Margin="10,0,0,0" Padding="8,2" Content="Get it"
                         Foreground="White" Click="BtnUpdate_Click"
                         ToolTip="Open the releases page"/>
+                <!-- The download is a second copy of the exe; this shows which file
+                     to replace, and answers "where did I put this thing?" -->
+                <Button x:Name="BtnUpdateReveal" DockPanel.Dock="Left" Style="{StaticResource NavButton}"
+                        FontSize="12" Margin="4,0,0,0" Padding="8,2" Content="Show current file"
+                        Foreground="#DCEEF8" Click="BtnUpdateReveal_Click"/>
                 <Button DockPanel.Dock="Right" Style="{StaticResource NavButton}" FontSize="11"
                         Padding="6,2" Content="&#x2715;" Click="BtnUpdateDismiss_Click"
                         ToolTip="Dismiss"/>

@@ -180,6 +180,33 @@ Each launch is its own instance — two folders side by side is supported, so
 running the exe again won't raise an existing window (use the `focus` command
 for that).
 
+## Scope, and non-goals
+
+One job: **render what Claude just wrote, immediately.** Feature requests get
+weighed against that sentence, and things that don't serve it are declined —
+not because they're bad ideas, but because the tool stays useful by staying small.
+
+In scope, and welcome: anything that helps you *read* an artifact. Find-in-page,
+an outline for long documents, search across artifacts, a light theme, better
+print output, more file types, nicer navigation.
+
+Deliberately not planned:
+
+- **Editing.** No saving, no inline changes. Claude writes the file, your editor
+  edits it, this renders it. An editor here would be a worse version of both.
+- **Cloud sync, accounts, sharing.** Everything is a local folder on your machine.
+  That's the point, not a limitation waiting to be lifted.
+- **Plugins or an extension API.** They'd trade the small self-contained binary
+  for a support surface one person can't maintain.
+- **Becoming an IDE.** No terminal, no git integration, no project tree.
+- **An Office suite.** `.docx`/`.xlsx` rendering is a convenience for files you
+  drop in, not a feature line to develop.
+- **Telemetry or analytics.** Nothing is collected, and nothing will be. The only
+  network calls are listed under [What touches the network](#what-touches-the-network).
+
+Not a non-goal, just not done yet: **macOS and Linux.** Windows-only today because
+it's WPF; cross-platform support is planned.
+
 ## Teaching Claude Code to use it
 
 [`CLAUDE-PROMPT.md`](CLAUDE-PROMPT.md) contains a ready-to-paste section for

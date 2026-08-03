@@ -258,6 +258,16 @@ public partial class MainWindow : Window
     private string? _renderedPath;
     private DateTime _renderedWrite;
 
+    // ShowEntry is called fire-and-forget from several places and every text renderer
+    // writes the *same* file in the render folder, so two quick selections could
+    // interleave at the awaits — the loser overwriting the winner's render and
+    // navigating on top of it, leaving current.txt and tabs.json naming one document
+    // while the screen showed another. The lock keeps one render in flight at a time
+    // (two concurrent writes to one render file can also just fail); the generation
+    // counter lets a superseded render drop out instead of doing work nobody sees.
+    private int _showGeneration;
+    private readonly SemaphoreSlim _showLock = new(1, 1);
+
     // Rendering is asynchronous inside the page (highlight.js, mermaid, the CDN
     // office/csv renderers), so a PDF export has to wait for it to settle.
     // Pages we generate post 'render-done'; anything Chromium renders natively
@@ -652,6 +662,9 @@ public partial class MainWindow : Window
         _cmdWatcher.Renamed += (_, _) => Dispatcher.InvokeAsync(() => _ = ProcessCommandFile());
     }
 
+    /// <summary>Backstop for a command file that can't be deleted — bounded work per event.</summary>
+    private const int MaxCommandsPerBatch = 10;
+
     private async Task ProcessCommandFile()
     {
         if (_processingCommand) return;
@@ -660,41 +673,52 @@ public partial class MainWindow : Window
         _processingCommand = true;
         try
         {
-            var text = (await ReadTextWithRetry(cmdFile))?.Trim();
-            try { File.Delete(cmdFile); } catch (Exception) { /* re-processing is harmless */ }
-            if (string.IsNullOrEmpty(text)) return;
-
-            var space = text.IndexOfAny(new[] { ' ', '\t' });
-            var verb = (space < 0 ? text : text[..space]).ToLowerInvariant();
-            var arg = space < 0 ? "" : text[(space + 1)..].Trim().Trim('"');
-
-            string status = "ok", detail;
-            try
+            // A command written while an earlier one is still processing — easily done,
+            // since capture/pdf/scroll-to await for seconds — fires a watcher event that
+            // this latch swallows, and nothing would ever revisit the file. Under the
+            // documented "write a line, wait, read the result" contract that dropped
+            // command is indistinguishable from a hang, so keep going until the file
+            // stays gone. Handlers are all dispatched here, so a write landing after the
+            // last File.Exists queues a fresh callback that runs once this work item
+            // completes — by which point the finally below has cleared the latch.
+            for (var n = 0; n < MaxCommandsPerBatch && File.Exists(cmdFile); n++)
             {
-                detail = verb switch
+                var text = (await ReadTextWithRetry(cmdFile))?.Trim();
+                try { File.Delete(cmdFile); } catch (Exception) { /* re-processing is harmless */ }
+                if (string.IsNullOrEmpty(text)) continue;
+
+                var space = text.IndexOfAny(new[] { ' ', '\t' });
+                var verb = (space < 0 ? text : text[..space]).ToLowerInvariant();
+                var arg = space < 0 ? "" : text[(space + 1)..].Trim().Trim('"');
+
+                string status = "ok", detail;
+                try
                 {
-                    "capture" => await CmdCapture(arg),
-                    "show" => CmdShow(arg),
-                    "scroll-to" => await CmdScrollTo(arg),
-                    "pdf" => await CmdPdf(arg),
-                    "focus" => CmdFocus(arg),
-                    _ => throw new InvalidOperationException(
-                        $"unknown command '{verb}' (capture | show | scroll-to | pdf | focus)")
-                };
-            }
-            catch (Exception ex)
-            {
-                status = "error";
-                detail = ex.Message;
-            }
+                    detail = verb switch
+                    {
+                        "capture" => await CmdCapture(arg),
+                        "show" => CmdShow(arg),
+                        "scroll-to" => await CmdScrollTo(arg),
+                        "pdf" => await CmdPdf(arg),
+                        "focus" => CmdFocus(arg),
+                        _ => throw new InvalidOperationException(
+                            $"unknown command '{verb}' (capture | show | scroll-to | pdf | focus)")
+                    };
+                }
+                catch (Exception ex)
+                {
+                    status = "error";
+                    detail = ex.Message;
+                }
 
-            try
-            {
-                File.WriteAllText(System.IO.Path.Combine(_appDataDir, "command-result.txt"),
-                    JsonSerializer.Serialize(new { command = text, status, detail, at = DateTime.Now },
-                        new JsonSerializerOptions { WriteIndented = true }));
+                try
+                {
+                    File.WriteAllText(System.IO.Path.Combine(_appDataDir, "command-result.txt"),
+                        JsonSerializer.Serialize(new { command = text, status, detail, at = DateTime.Now },
+                            new JsonSerializerOptions { WriteIndented = true }));
+                }
+                catch (Exception) { /* caller just won't see the ack */ }
             }
-            catch (Exception) { /* caller just won't see the ack */ }
         }
         finally { _processingCommand = false; }
     }
@@ -1368,6 +1392,112 @@ public partial class MainWindow : Window
     {
         if (!_webReady) return;
 
+        var ext = System.IO.Path.GetExtension(entry.Path).ToLowerInvariant();
+
+        // Arm the render-settled signals before navigating (see _renderSignal) — and
+        // synchronously, before this method first yields. ExportPdf calls SelectEntry
+        // and then immediately awaits WaitForRenderAsync, so arming any later would
+        // leave the export waiting on the *previous* render's already-completed
+        // signal and printing the page it replaced.
+        _expectRenderSignal = ext is ".md" or ".markdown" or ".ipynb" or ".docx" or ".xlsx" or ".csv" or ".tsv" or ".svg"
+            || CodeExtensions.Contains(ext);
+        _renderSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _navSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var gen = ++_showGeneration;
+        await _showLock.WaitAsync();
+        try
+        {
+            // Superseded while queued — the newer selection is already on its way
+            if (gen == _showGeneration) await ShowEntryCore(entry, ext, gen);
+        }
+        finally { _showLock.Release(); }
+    }
+
+    /// <summary>
+    /// Builds the render, then commits to it. Nothing user-visible moves until the
+    /// navigation is certain: a read that fails (file locked by its writer, or deleted
+    /// between the scan and here) used to leave the title bar, current.txt and
+    /// tabs.json all naming a document that never reached the screen.
+    /// </summary>
+    private async Task ShowEntryCore(FileEntry entry, string ext, int gen)
+    {
+        var v = entry.LastWrite.Ticks;
+        string url;
+
+        if (ext is ".md" or ".markdown")
+        {
+            var text = await ReadTextWithRetry(entry.Path);
+            if (gen != _showGeneration) return;
+            if (text is null) { ShowUnreadable(entry); return; }
+            // Served from a cache file via its own virtual host: a real https origin
+            // (NavigateToString's about:blank origin breaks dynamic ESM imports like mermaid)
+            var rendered = System.IO.Path.Combine(_renderDir, "current.html");
+            await File.WriteAllTextAsync(rendered, BuildMarkdownHtml(text));
+            if (gen != _showGeneration) return;
+            url = $"https://{RenderHost}/current.html?v={v}";
+        }
+        else if (ext == ".ipynb")
+        {
+            var text = await ReadTextWithRetry(entry.Path);
+            if (gen != _showGeneration) return;
+            if (text is null) { ShowUnreadable(entry); return; }
+            var rendered = System.IO.Path.Combine(_renderDir, "current.html");
+            await File.WriteAllTextAsync(rendered, BuildNotebookHtml(text));
+            if (gen != _showGeneration) return;
+            url = $"https://{RenderHost}/current.html?v={v}";
+        }
+        else if (ext is ".docx" or ".xlsx")
+        {
+            // Copied beside the render page so the fetch is same-origin
+            // (cross-virtual-host fetches are blocked by CORS)
+            var cached = System.IO.Path.Combine(_renderDir, "current" + ext);
+            var copied = await CopyWithRetry(entry.Path, cached);
+            if (gen != _showGeneration) return;
+            if (!copied) { ShowUnreadable(entry); return; }
+            var page = System.IO.Path.Combine(_renderDir, "office.html");
+            await File.WriteAllTextAsync(page, BuildOfficeHtml(ext, v));
+            if (gen != _showGeneration) return;
+            url = $"https://{RenderHost}/office.html?v={v}";
+        }
+        else if (ext is ".csv" or ".tsv")
+        {
+            var text = await ReadTextWithRetry(entry.Path);
+            if (gen != _showGeneration) return;
+            if (text is null) { ShowUnreadable(entry); return; }
+            var page = System.IO.Path.Combine(_renderDir, "csv.html");
+            await File.WriteAllTextAsync(page, BuildCsvHtml(text, ext == ".tsv" ? '\t' : ','));
+            if (gen != _showGeneration) return;
+            url = $"https://{RenderHost}/csv.html?v={v}";
+        }
+        else if (CodeExtensions.Contains(ext))
+        {
+            var text = await ReadTextWithRetry(entry.Path);
+            if (gen != _showGeneration) return;
+            if (text is null) { ShowUnreadable(entry); return; }
+            var page = System.IO.Path.Combine(_renderDir, "code.html");
+            await File.WriteAllTextAsync(page, BuildCodeHtml(ext, text));
+            if (gen != _showGeneration) return;
+            url = $"https://{RenderHost}/code.html?v={v}";
+        }
+        else if (ext == ".svg")
+        {
+            // Chromium renders a bare .svg at whatever size the file declares, top-left,
+            // against a white page — a fixed-size drawing sits in the corner of a white
+            // field. Framing it in a page of our own centres it on the document
+            // background and fits it to the window (vector, so scaling costs nothing).
+            var page = System.IO.Path.Combine(_renderDir, "svg.html");
+            await File.WriteAllTextAsync(page, BuildSvgHtml(Uri.EscapeDataString(entry.Name), v));
+            if (gen != _showGeneration) return;
+            url = $"https://{RenderHost}/svg.html?v={v}";
+        }
+        else
+        {
+            // Served through the virtual host so Chromium handles it natively
+            // (PDF viewer, images, media playback, HTML with relative asset paths, etc.)
+            url = $"https://{VirtualHost}/{Uri.EscapeDataString(entry.Name)}";
+        }
+
         // Rendering something means the empty state is over. Set here rather than at
         // the call sites: reopening a closed tab (sidebar click, or the show command)
         // adds it directly without a Rescan, and Rescan used to be the only place
@@ -1384,65 +1514,16 @@ public partial class MainWindow : Window
         WriteCurrentDocState(entry.Path);
         WriteTabsState();
 
-        var ext = System.IO.Path.GetExtension(entry.Path).ToLowerInvariant();
-
-        // Arm the render-settled signals before navigating (see _renderSignal)
-        _expectRenderSignal = ext is ".md" or ".markdown" or ".ipynb" or ".docx" or ".xlsx" or ".csv" or ".tsv"
-            || CodeExtensions.Contains(ext);
-        _renderSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _navSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        if (ext is ".md" or ".markdown")
-        {
-            var text = await ReadTextWithRetry(entry.Path);
-            if (text is null) return;
-            // Served from a cache file via its own virtual host: a real https origin
-            // (NavigateToString's about:blank origin breaks dynamic ESM imports like mermaid)
-            var rendered = System.IO.Path.Combine(_renderDir, "current.html");
-            await File.WriteAllTextAsync(rendered, BuildMarkdownHtml(text));
-            Web.CoreWebView2.Navigate($"https://{RenderHost}/current.html?v={entry.LastWrite.Ticks}");
-        }
-        else if (ext == ".ipynb")
-        {
-            var text = await ReadTextWithRetry(entry.Path);
-            if (text is null) return;
-            var rendered = System.IO.Path.Combine(_renderDir, "current.html");
-            await File.WriteAllTextAsync(rendered, BuildNotebookHtml(text));
-            Web.CoreWebView2.Navigate($"https://{RenderHost}/current.html?v={entry.LastWrite.Ticks}");
-        }
-        else if (ext is ".docx" or ".xlsx")
-        {
-            // Copied beside the render page so the fetch is same-origin
-            // (cross-virtual-host fetches are blocked by CORS)
-            var cached = System.IO.Path.Combine(_renderDir, "current" + ext);
-            if (!await CopyWithRetry(entry.Path, cached)) return;
-            var page = System.IO.Path.Combine(_renderDir, "office.html");
-            await File.WriteAllTextAsync(page, BuildOfficeHtml(ext, entry.LastWrite.Ticks));
-            Web.CoreWebView2.Navigate($"https://{RenderHost}/office.html?v={entry.LastWrite.Ticks}");
-        }
-        else if (ext is ".csv" or ".tsv")
-        {
-            var text = await ReadTextWithRetry(entry.Path);
-            if (text is null) return;
-            var page = System.IO.Path.Combine(_renderDir, "csv.html");
-            await File.WriteAllTextAsync(page, BuildCsvHtml(text, ext == ".tsv" ? '\t' : ','));
-            Web.CoreWebView2.Navigate($"https://{RenderHost}/csv.html?v={entry.LastWrite.Ticks}");
-        }
-        else if (CodeExtensions.Contains(ext))
-        {
-            var text = await ReadTextWithRetry(entry.Path);
-            if (text is null) return;
-            var page = System.IO.Path.Combine(_renderDir, "code.html");
-            await File.WriteAllTextAsync(page, BuildCodeHtml(ext, text));
-            Web.CoreWebView2.Navigate($"https://{RenderHost}/code.html?v={entry.LastWrite.Ticks}");
-        }
-        else
-        {
-            // Served through the virtual host so Chromium handles it natively
-            // (PDF viewer, images, media playback, HTML with relative asset paths, etc.)
-            Web.CoreWebView2.Navigate($"https://{VirtualHost}/{Uri.EscapeDataString(entry.Name)}");
-        }
+        Web.CoreWebView2.Navigate(url);
     }
+
+    /// <summary>
+    /// The artifact couldn't be read — locked by whatever is writing it, or gone
+    /// between the scan and here. Reported in the header (where "kept →" reports too)
+    /// with the previous document left rendered, so the title bar and the state files
+    /// keep describing what is actually on screen.
+    /// </summary>
+    private void ShowUnreadable(FileEntry entry) => TxtDate.Text = $"could not read {entry.Name}";
 
     /// <summary>Row cap — past this the table stops being readable and starts being slow.</summary>
     private const int CsvRowLimit = 5000;
@@ -1806,6 +1887,35 @@ public partial class MainWindow : Window
                 .finally(() => chrome.webview.postMessage('render-done'));
             </script></body></html>
             """;
+
+    /// <summary>
+    /// Frames an SVG in a page of our own so it lands centred on the document
+    /// background and scaled to the window, instead of pinned to the top-left corner
+    /// of a white page at whatever size the file happens to declare. Loaded as an
+    /// image (cross-origin from the artifacts host, which is fine for display), so
+    /// script inside a dropped SVG stays inert.
+    /// </summary>
+    private static string BuildSvgHtml(string escapedName, long ticks) => $$"""
+        <!doctype html><html><head><meta charset="utf-8"><style>
+          :root { color-scheme: dark; }
+          html, body { height: 100%; margin: 0; }
+          body { background: #1e1e1e; display: flex; align-items: center; justify-content: center;
+                 padding: 24px; box-sizing: border-box; }
+          #art { width: 100%; height: 100%; object-fit: contain; }
+          .err { color: #d4d4d4; font: 14px system-ui, sans-serif; text-align: center; }
+        </style></head><body>
+        <img id="art" alt="">
+        <script>
+          const art = document.getElementById('art');
+          const done = () => chrome.webview.postMessage('render-done');
+          art.addEventListener('load', done);
+          art.addEventListener('error', () => {
+            document.body.innerHTML = '<div class="err">Could not render this SVG.</div>';
+            done();
+          });
+          art.src = 'https://{{VirtualHost}}/{{escapedName}}?v={{ticks}}';
+        </script></body></html>
+        """;
 
     private static async Task<string?> ReadTextWithRetry(string path)
     {

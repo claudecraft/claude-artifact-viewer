@@ -1,9 +1,9 @@
 # Proposed fixes from Fable's 2026-08-03 review
 
-Status: **proposed, not implemented** — written for Opus to review before any code
-changes. The working tree was left untouched. Full review narrative is in the
-artifact viewer as `artifact-viewer-code-review.md`; this doc is the actionable
-subset with implementation sketches.
+Status: **1, 2 and the SVG framing implemented** (2026-08-03, reviewed and amended
+by Opus — see "Implementation notes" at the end). 3 and 4 remain proposed. Full
+review narrative is in the artifact viewer as `artifact-viewer-code-review.md`;
+this doc is the actionable subset with implementation sketches.
 
 Line numbers refer to `MainWindow.xaml.cs` at commit `ba16a5f`.
 
@@ -53,19 +53,39 @@ A staleness check goes after **every** `await` in every branch (including
 The synchronous tail (native-render branch) needs no check — it can't be
 interleaved.
 
-**Repro / verification recipe.** The race itself is timing-dependent, but the
-symptom is deterministic to check: rapidly Alt+Left/Alt+Right through a folder
-of markdown files, then compare the title bar against
-`%LOCALAPPDATA%\ArtifactViewer\current.txt`. Any disagreement is the bug.
-After the generation-counter fix, disagreement is impossible — re-run the same
-sweep to confirm. To widen the race window while testing, use large `.md`
-files (the `ReadTextWithRetry` await is the main interleave point).
+**Repro / verification recipe.** ~~Compare the title bar against
+`%LOCALAPPDATA%\ArtifactViewer\current.txt`.~~ **This recipe does not work**, and
+was corrected during implementation: `TxtTitle`, `_renderedPath` and
+`WriteCurrentDocState` were all set on adjacent *synchronous* lines with no
+`await` between them, so the title bar and `current.txt` can never disagree — not
+even on the unfixed build. The observable symptom is the **screen** disagreeing
+with the title bar and `current.txt`, i.e. it needs a screenshot (`capture`), not
+a file comparison.
+
+Attempts to reproduce it on the unfixed build failed: bursts of `show` commands
+at 80 ms and a 3.6 MB markdown probe against a small file at 40 ms both left the
+screen, title and state files in agreement. The dispatcher tends to serialise the
+two calls in practice. So the fix is justified by inspection (shared render file,
+fire-and-forget invocation, `await` between the state write and the navigate),
+and the testing below verifies **no regression** rather than the bug's prior
+existence — which is consistent with the review's own "low probability, one
+baffling report a month" framing.
 
 **Review question for Opus:** should the early state writes
 (`WriteCurrentDocState` / `WriteTabsState`, currently before the ext dispatch)
 move to *after* the successful navigate, so `current.txt` never claims a doc
 that failed to render (e.g. `ReadTextWithRetry` returning null)? That's a
 behavior change beyond the race fix; Fable leans yes but flags it as separate.
+
+**Answered: yes, but the question was scoped too narrowly.** Moving only the two
+state writes covers half the lie — `TxtTitle`, `TxtDate`, `Title` and
+`_renderedPath` were set on the same early lines. And `if (text is null) return;`
+is a *deterministic* failure, not a race: a file locked by its writer left the
+title bar and `current.txt` naming a document the screen had never shown. So the
+whole header-and-state block moved after the render is built, and the failure
+path now reports "could not read &lt;name&gt;" in the header — the same place
+`BtnKeep_Click` reports "kept →" — leaving the previous document rendered so the
+header and the state files keep describing what is actually on screen.
 
 ---
 
@@ -228,6 +248,45 @@ regressions.
 - `SaveSetting` read-modify-write has no cross-instance locking.
 - `capture`/`pdf` accept arbitrary output paths — the control channel is an
   unauthenticated local RPC by design; keep it documented as such.
+
+## Implementation notes (Opus, 2026-08-03)
+
+Amendments made to the proposals above while implementing them:
+
+- **Order flipped.** The doc suggested 2 → 1; they shipped together. `CmdShow`
+  reaches `ShowEntry` through the same fire-and-forget path, so fixing the
+  dropped command is exactly what makes back-to-back `show` commands *both*
+  execute — fixing 2 alone increases exposure to 1.
+- **A lock, not just a generation counter.** The counter alone leaves a hole the
+  sketch missed: a superseded render that passes its staleness check and *then*
+  gets interleaved during `File.WriteAllTextAsync` still collides with the winner
+  on the shared render file — two concurrent writes to one path can interleave or
+  just throw (silently, under `_ = ShowEntry(...)`). A `SemaphoreSlim(1,1)` keeps
+  one render in flight; the counter now only skips work nobody will see.
+- **Render signals must stay armed synchronously.** They could not move down to
+  the navigate: `ExportPdf` calls `SelectEntry` and then immediately awaits
+  `WaitForRenderAsync`, so arming any later than the first `await` would leave an
+  export waiting on the *previous* render's already-completed signal and printing
+  the page it replaced. Arming stays at the top of `ShowEntry`, with a comment
+  recording the coupling.
+- **Iteration cap taken** on the command loop (`MaxCommandsPerBatch = 10`). The
+  `IsNullOrEmpty → continue` path assumes the delete succeeded, and that delete
+  is inside a swallowed `try`.
+- **SVG framing added** (not in the original list): Chromium renders a bare
+  `.svg` at whatever size the file declares, top-left, against a white page, so a
+  600×600 drawing sat in the corner of a white field. `BuildSvgHtml` frames it
+  centred on the document background, scaled to fit. Loaded via `<img>`, so
+  script inside a dropped SVG stays inert — a small bonus against the trust gap
+  in item 3.
+
+**Verified:** `dotnet build` clean; all ten render branches (md, csv, code, docx,
+xlsx, pdf, png, html, json, svg) navigate with `current.txt` matching; CSV and SVG
+renders eyeballed via `capture`; PDF export produces correctly-sized output for
+the document actually on screen (41 KB for an SVG vs 182 KB for `welcome.md`,
+confirming it is not printing a stale page). The dropped-command fix reproduces
+its bug and its fix exactly as the recipe in item 2 describes — pre-fix the
+`show` behind a `pdf` was lost; post-fix both run. The `ShowEntry` race could not
+be reproduced either way (see item 1).
 
 ## Suggested order
 

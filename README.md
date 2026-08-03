@@ -49,7 +49,12 @@ table to terminal scrollback.
   with `"checkForUpdates": "false"` in `settings.json`.
 - **Tabs** — one per file, ordered oldest → newest; hover for a ✕ that hides
   the tab without touching the file. Closed state persists across restarts;
-  a closed file reopens automatically if it's rewritten.
+  a closed file reopens automatically if it's rewritten. Right-click for
+  **Close other tabs** / **Close all tabs**.
+- **Pinned tabs** — right-click → *Pin tab* moves an artifact to its own row
+  above the others, VS-style. A pinned tab keeps its place when new artifacts
+  arrive, survives *Close all tabs*, and persists across restarts. The row is
+  hidden until something is pinned.
 - **◀ ▶ arrows** (also `Alt+Left` / `Alt+Right`) step through files by date;
   the title bar shows the current file, its timestamp, and position (`3 / 7`)
 - **☰ sidebar** — full file list with timestamps; closed docs appear greyed

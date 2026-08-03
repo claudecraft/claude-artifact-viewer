@@ -68,6 +68,68 @@
             </Setter>
         </Style>
 
+        <!-- Shared by the pinned row and the main row -->
+        <DataTemplate x:Key="TabTemplate">
+            <StackPanel Orientation="Horizontal">
+                <StackPanel.ContextMenu>
+                    <!-- DataContext is inherited from the placement target, so the
+                         handlers read the tab's FileEntry the same way the × does -->
+                    <ContextMenu Background="#2D2D30" BorderBrush="#3F3F46" Opened="TabMenu_Opened">
+                        <ContextMenu.Resources>
+                            <Style TargetType="MenuItem">
+                                <Setter Property="Foreground" Value="#D4D4D4"/>
+                                <Setter Property="Padding" Value="6,4"/>
+                            </Style>
+                        </ContextMenu.Resources>
+                        <MenuItem Tag="pin" Header="Pin tab" Click="TabPin_Click"/>
+                        <Separator/>
+                        <MenuItem Header="Export to PDF…" Click="TabExportPdf_Click"/>
+                        <Separator/>
+                        <MenuItem Header="Close tab" Click="TabClose_Click"/>
+                        <MenuItem Header="Close other tabs" Click="TabCloseOthers_Click"/>
+                        <MenuItem Header="Close all tabs" Click="TabCloseAll_Click"/>
+                    </ContextMenu>
+                </StackPanel.ContextMenu>
+                <TextBlock Text="{Binding Name}" FontSize="12" VerticalAlignment="Center"/>
+                <Button Click="TabClose_Click" ToolTip="Close (hides until rewritten)"
+                        Content="&#x2715;" FontSize="9" Margin="7,0,0,0" Padding="3,1"
+                        VerticalAlignment="Center" Cursor="Hand">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Setter Property="Foreground" Value="#8A8A8A"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="Visibility" Value="Hidden"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="bg" Background="{TemplateBinding Background}"
+                                                CornerRadius="3" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bg" Property="Background" Value="#4A4A4A"/>
+                                                <Setter Property="Foreground" Value="White"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+            </StackPanel>
+        </DataTemplate>
+
         <!-- File tab -->
         <Style x:Key="TabItemStyle" TargetType="ListBoxItem">
             <Setter Property="Foreground" Value="#9A9A9A"/>
@@ -98,10 +160,11 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>   <!-- toolbar -->
+            <RowDefinition Height="Auto"/>   <!-- pinned tabs -->
+            <RowDefinition Height="Auto"/>   <!-- tabs -->
+            <RowDefinition Height="Auto"/>   <!-- update notice -->
+            <RowDefinition Height="*"/>      <!-- sidebar + viewer -->
         </Grid.RowDefinitions>
 
         <!-- Toolbar -->
@@ -136,9 +199,25 @@
             </StackPanel>
         </DockPanel>
 
-        <!-- Tab strip: one tab per file, oldest → newest -->
-        <ListBox x:Name="TabStrip" Grid.Row="1" Background="#1E1E1E" BorderThickness="0"
+        <!-- Pinned row: hidden until something is pinned, like VS -->
+        <ListBox x:Name="PinnedStrip" Grid.Row="1" Background="#232323" BorderThickness="0,0,0,1"
+                 BorderBrush="#333" Visibility="Collapsed"
                  ItemContainerStyle="{StaticResource TabItemStyle}"
+                 ItemTemplate="{StaticResource TabTemplate}"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                 SelectionChanged="PinnedStrip_SelectionChanged">
+            <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+        </ListBox>
+
+        <!-- Tab strip: one tab per file, oldest → newest -->
+        <ListBox x:Name="TabStrip" Grid.Row="2" Background="#1E1E1E" BorderThickness="0"
+                 ItemContainerStyle="{StaticResource TabItemStyle}"
+                 ItemTemplate="{StaticResource TabTemplate}"
                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
                  ScrollViewer.VerticalScrollBarVisibility="Disabled"
                  SelectionChanged="TabStrip_SelectionChanged">
@@ -147,68 +226,10 @@
                     <StackPanel Orientation="Horizontal"/>
                 </ItemsPanelTemplate>
             </ListBox.ItemsPanel>
-            <ListBox.ItemTemplate>
-                <DataTemplate>
-                    <StackPanel Orientation="Horizontal">
-                        <StackPanel.ContextMenu>
-                            <!-- DataContext is inherited from the placement target, so the
-                                 handlers read the tab's FileEntry the same way the × does -->
-                            <ContextMenu Background="#2D2D30" BorderBrush="#3F3F46">
-                                <ContextMenu.Resources>
-                                    <Style TargetType="MenuItem">
-                                        <Setter Property="Foreground" Value="#D4D4D4"/>
-                                        <Setter Property="Padding" Value="6,4"/>
-                                    </Style>
-                                </ContextMenu.Resources>
-                                <MenuItem Header="Export to PDF…" Click="TabExportPdf_Click"/>
-                                <Separator/>
-                                <MenuItem Header="Close tab" Click="TabClose_Click"/>
-                            </ContextMenu>
-                        </StackPanel.ContextMenu>
-                        <TextBlock Text="{Binding Name}" FontSize="12" VerticalAlignment="Center"/>
-                        <Button Click="TabClose_Click" ToolTip="Close (hides until rewritten)"
-                                Content="&#x2715;" FontSize="9" Margin="7,0,0,0" Padding="3,1"
-                                VerticalAlignment="Center" Cursor="Hand">
-                            <Button.Style>
-                                <Style TargetType="Button">
-                                    <Setter Property="Foreground" Value="#8A8A8A"/>
-                                    <Setter Property="BorderThickness" Value="0"/>
-                                    <Setter Property="Background" Value="Transparent"/>
-                                    <Setter Property="Visibility" Value="Hidden"/>
-                                    <Setter Property="Template">
-                                        <Setter.Value>
-                                            <ControlTemplate TargetType="Button">
-                                                <Border x:Name="bg" Background="{TemplateBinding Background}"
-                                                        CornerRadius="3" Padding="{TemplateBinding Padding}">
-                                                    <ContentPresenter/>
-                                                </Border>
-                                                <ControlTemplate.Triggers>
-                                                    <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter TargetName="bg" Property="Background" Value="#4A4A4A"/>
-                                                        <Setter Property="Foreground" Value="White"/>
-                                                    </Trigger>
-                                                </ControlTemplate.Triggers>
-                                            </ControlTemplate>
-                                        </Setter.Value>
-                                    </Setter>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Button.Style>
-                        </Button>
-                    </StackPanel>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
         </ListBox>
 
         <!-- Update notice: hidden unless a newer release exists -->
-        <Border x:Name="UpdateBanner" Grid.Row="2" Background="#0E4B6E" BorderBrush="#1A6B96"
+        <Border x:Name="UpdateBanner" Grid.Row="3" Background="#0E4B6E" BorderBrush="#1A6B96"
                 BorderThickness="0,1,0,1" Padding="12,6" Visibility="Collapsed">
             <DockPanel LastChildFill="False">
                 <TextBlock x:Name="TxtUpdate" DockPanel.Dock="Left" Foreground="#DCEEF8" FontSize="12"
@@ -229,7 +250,7 @@
         </Border>
 
         <!-- Sidebar + viewer -->
-        <Grid Grid.Row="3">
+        <Grid Grid.Row="4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>

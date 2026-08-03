@@ -48,6 +48,10 @@ public partial class MainWindow : Window
     private FileSystemWatcher? _cmdWatcher;
     private bool _processingCommand;
     private readonly ObservableCollection<FileEntry> _files = new();
+    private readonly ObservableCollection<FileEntry> _pinnedFiles = new();
+    // Ordered so the pinned row keeps the order you pinned things in
+    private readonly List<string> _pinnedPaths = new();
+    private string _pinnedStatePath = "";
     private readonly ObservableCollection<SidebarItem> _allFiles = new();
     private List<FileEntry> _scanned = new();
     private FileSystemWatcher? _watcher;
@@ -226,6 +230,30 @@ public partial class MainWindow : Window
         }
         catch (Exception) { /* non-fatal: worst case closes don't persist this session */ }
     }
+
+    private static bool PathEq(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    private bool IsPinned(string path) => _pinnedPaths.Any(p => PathEq(p, path));
+
+    private void LoadPinned()
+    {
+        try
+        {
+            if (!File.Exists(_pinnedStatePath)) return;
+            var loaded = JsonSerializer.Deserialize<List<string>>(File.ReadAllText(_pinnedStatePath));
+            if (loaded is not null) _pinnedPaths.AddRange(loaded);
+        }
+        catch (Exception) { /* corrupt state — start with nothing pinned */ }
+    }
+
+    private void SavePinned()
+    {
+        try
+        {
+            File.WriteAllText(_pinnedStatePath, JsonSerializer.Serialize(_pinnedPaths));
+        }
+        catch (Exception) { /* non-fatal: pins just don't survive the session */ }
+    }
     private bool _webReady;
     private string? _renderedPath;
     private DateTime _renderedWrite;
@@ -262,13 +290,18 @@ public partial class MainWindow : Window
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ArtifactViewer", "closed-tabs.json");
         LoadClosed();
 
+        _pinnedStatePath = System.IO.Path.Combine(appDataDir, "pinned-tabs.json");
+        LoadPinned();
+
         ExtractVendoredLibs();
 
         // Before the first Rescan, so it's simply there as the newest artifact
         SeedWelcomeArtifact();
 
         TabStrip.ItemsSource = _files;
+        PinnedStrip.ItemsSource = _pinnedFiles;
         SideList.ItemsSource = _allFiles;
+        System.Windows.Interop.ComponentDispatcher.ThreadPreprocessMessage += OnThreadPreprocessMessage;
         Loaded += MainWindow_Loaded;
     }
 
@@ -296,6 +329,12 @@ public partial class MainWindow : Window
             RenderHost, _renderDir, CoreWebView2HostResourceAccessKind.Allow);
         Web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
         Web.CoreWebView2.Settings.IsStatusBarEnabled = false;
+
+        // WebView2 takes keyboard focus after every navigation, and Chromium then
+        // eats the shortcuts: Alt+Arrow becomes browser back/forward, Ctrl+± becomes
+        // browser zoom. Without this the app's own shortcuts work exactly once —
+        // until the first artifact renders.
+        Web.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
 
         // Drops over the web content can't reach the WPF handlers (separate HWND),
         // so catch them in the page and post the file paths back to the host
@@ -490,30 +529,53 @@ public partial class MainWindow : Window
             if (_closed.TryGetValue(f.Path, out var closedAt) && f.LastWrite > closedAt)
                 closedChanged |= _closed.Remove(f.Path);
 
-        // Drop closed-list entries for files no longer on disk
+        // Drop state for files that are gone — but only within the folder being
+        // watched. Closed and pinned state is global while a scan only sees one
+        // folder, so pruning on absence alone throws away state for every other
+        // folder's artifacts the moment the app is pointed somewhere else.
         var onDisk = new HashSet<string>(scanned.Select(f => f.Path), StringComparer.OrdinalIgnoreCase);
-        foreach (var gone in _closed.Keys.Where(k => !onDisk.Contains(k)).ToList())
+        bool GoneFromWatchedFolder(string path) =>
+            !onDisk.Contains(path)
+            && PathEq(System.IO.Path.GetDirectoryName(path) ?? "", _watchDir.TrimEnd('\\'));
+
+        foreach (var gone in _closed.Keys.Where(GoneFromWatchedFolder).ToList())
             closedChanged |= _closed.Remove(gone);
         if (closedChanged) SaveClosed();
+
+        if (_pinnedPaths.RemoveAll(GoneFromWatchedFolder) > 0) SavePinned();
 
         _scanned = scanned;
         var open = scanned.Where(f => !_closed.ContainsKey(f.Path)).ToList();
 
-        var selectedPath = (TabStrip.SelectedItem as FileEntry)?.Path;
+        // Pinned entries keep pin order; the rest stay chronological
+        var pinned = _pinnedPaths
+            .Select(p => open.FirstOrDefault(f => PathEq(f.Path, p)))
+            .Where(f => f is not null)
+            .Select(f => f!)
+            .ToList();
+        var unpinned = open.Where(f => !IsPinned(f.Path)).ToList();
+
+        var selectedPath = CurrentEntry?.Path;
+        // A pinned tab shouldn't be yanked away by a newly written artifact
+        var onPinned = selectedPath is not null && IsPinned(selectedPath);
         var wasAtLatest = selectLatest
-            || _files.Count == 0
-            || selectedPath == _files[^1].Path;
+            || (!onPinned && (_files.Count == 0 || selectedPath == _files[^1].Path));
 
         _syncingSelection = true;
         _files.Clear();
-        foreach (var f in open) _files.Add(f);
+        foreach (var f in unpinned) _files.Add(f);
+        _pinnedFiles.Clear();
+        foreach (var f in pinned) _pinnedFiles.Add(f);
         _syncingSelection = false;
+        PinnedStrip.Visibility = _pinnedFiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         RebuildSidebar();
 
-        TxtEmpty.Visibility = _files.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        Web.Visibility = _files.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        // Counts both rows: everything open could be pinned, leaving _files empty
+        var order = NavOrder;
+        TxtEmpty.Visibility = order.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        Web.Visibility = order.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
 
-        if (_files.Count == 0)
+        if (order.Count == 0)
         {
             TxtTitle.Text = "Waiting for artifacts…";
             TxtDate.Text = "";
@@ -523,16 +585,16 @@ public partial class MainWindow : Window
             return;
         }
 
-        FileEntry target;
-        if (wasAtLatest)
-            target = _files[^1];
-        else
-            target = _files.FirstOrDefault(f => f.Path == selectedPath) ?? _files[^1];
+        // "Latest" means the newest unpinned artifact, falling back to the pinned row
+        var newest = _files.Count > 0 ? _files[^1] : order[^1];
+        var target = wasAtLatest
+            ? newest
+            : order.FirstOrDefault(f => PathEq(f.Path, selectedPath ?? "")) ?? newest;
 
-        // Setting SelectedItem triggers TabStrip_SelectionChanged → ShowEntry.
-        // If the selection is unchanged but the file was rewritten, force a re-render.
-        if (!ReferenceEquals(TabStrip.SelectedItem, target) || (TabStrip.SelectedItem as FileEntry)?.Path != target.Path)
-            TabStrip.SelectedItem = target;
+        // Selecting triggers the strip's SelectionChanged → ShowEntry. If the selection
+        // is unchanged but the file was rewritten, force a re-render.
+        if (!PathEq(CurrentEntry?.Path ?? "", target.Path))
+            SelectEntry(target.Path);
         else if (target.LastWrite != _renderedWrite)
             _ = ShowEntry(target);
 
@@ -560,6 +622,7 @@ public partial class MainWindow : Window
                 path = f.Path,
                 lastWrite = f.LastWrite,
                 open = !_closed.ContainsKey(f.Path),
+                pinned = IsPinned(f.Path),
                 current = string.Equals(f.Path, _renderedPath, StringComparison.OrdinalIgnoreCase)
             });
             File.WriteAllText(System.IO.Path.Combine(_appDataDir, "tabs.json"),
@@ -667,7 +730,9 @@ public partial class MainWindow : Window
             Activate();
         }
 
-        var state = IsActive ? "focused" : "raised (foreground lock — taskbar flash only)";
+        // IsActive can report true while the window still isn't in front, so the
+        // caller gets the real answer from the OS rather than WPF's view of it
+        var state = IsForeground() ? "focused" : "raised (foreground lock — taskbar flash only)";
         return shown is null ? state : $"{state}: {shown}";
     }
 
@@ -703,7 +768,7 @@ public partial class MainWindow : Window
             _files.Insert(i, entry);
             RebuildSidebar();
         }
-        TabStrip.SelectedItem = _files.FirstOrDefault(f => f.Path == entry.Path);
+        SelectEntry(entry.Path);
         return entry.Path;
     }
 
@@ -760,9 +825,9 @@ public partial class MainWindow : Window
         // PrintToPdfAsync prints what's on screen, so the tab has to be showing
         if (!string.Equals(_renderedPath, entry.Path, StringComparison.OrdinalIgnoreCase))
         {
-            var tab = _files.FirstOrDefault(f => f.Path == entry.Path);
-            if (tab is null) throw new InvalidOperationException($"'{entry.Name}' has no open tab to render");
-            TabStrip.SelectedItem = tab;
+            if (!NavOrder.Any(f => PathEq(f.Path, entry.Path)))
+                throw new InvalidOperationException($"'{entry.Name}' has no open tab to render");
+            SelectEntry(entry.Path);
         }
         await WaitForRenderAsync();
 
@@ -916,9 +981,7 @@ public partial class MainWindow : Window
 
         if (lastAdded is null) return;
         Rescan(selectLatest: false);
-        var entry = _files.FirstOrDefault(f =>
-            string.Equals(f.Path, lastAdded, StringComparison.OrdinalIgnoreCase));
-        if (entry is not null) TabStrip.SelectedItem = entry;
+        SelectEntry(lastAdded);
     }
 
     // ---------- Navigation ----------
@@ -938,21 +1001,69 @@ public partial class MainWindow : Window
         WriteTabsState();
     }
 
+    /// <summary>
+    /// The one logically selected artifact. Two rows hold one selection between
+    /// them, so exactly one of the strips has a selected item at a time.
+    /// </summary>
+    private FileEntry? CurrentEntry =>
+        (PinnedStrip.SelectedItem as FileEntry) ?? (TabStrip.SelectedItem as FileEntry);
+
+    /// <summary>Navigation order: pinned row first, then the chronological row.</summary>
+    private List<FileEntry> NavOrder => _pinnedFiles.Concat(_files).ToList();
+
+    /// <summary>Selects an artifact in whichever row holds it, clearing the other.</summary>
+    private void SelectEntry(string path)
+    {
+        var pinnedMatch = _pinnedFiles.FirstOrDefault(f => PathEq(f.Path, path));
+        var openMatch = _files.FirstOrDefault(f => PathEq(f.Path, path));
+        if (pinnedMatch is null && openMatch is null) return;
+
+        // Clear the other row silently, so only the real selection raises an event
+        _syncingSelection = true;
+        if (pinnedMatch is not null) TabStrip.SelectedItem = null;
+        else PinnedStrip.SelectedItem = null;
+        _syncingSelection = false;
+
+        if (pinnedMatch is not null) PinnedStrip.SelectedItem = pinnedMatch;
+        else TabStrip.SelectedItem = openMatch;
+    }
+
     private void TabStrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_syncingSelection) return;
         if (TabStrip.SelectedItem is FileEntry entry)
         {
             _syncingSelection = true;
-            var item = _allFiles.FirstOrDefault(s => s.Entry.Path == entry.Path);
-            SideList.SelectedItem = item;
-            if (item is not null) SideList.ScrollIntoView(item);
+            PinnedStrip.SelectedItem = null;
             _syncingSelection = false;
-
-            TabStrip.ScrollIntoView(entry);
-            _ = ShowEntry(entry);
+            OnEntrySelected(entry, TabStrip);
         }
         UpdateNavButtons();
+    }
+
+    private void PinnedStrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingSelection) return;
+        if (PinnedStrip.SelectedItem is FileEntry entry)
+        {
+            _syncingSelection = true;
+            TabStrip.SelectedItem = null;
+            _syncingSelection = false;
+            OnEntrySelected(entry, PinnedStrip);
+        }
+        UpdateNavButtons();
+    }
+
+    private void OnEntrySelected(FileEntry entry, ListBox strip)
+    {
+        _syncingSelection = true;
+        var item = _allFiles.FirstOrDefault(s => s.Entry.Path == entry.Path);
+        SideList.SelectedItem = item;
+        if (item is not null) SideList.ScrollIntoView(item);
+        _syncingSelection = false;
+
+        strip.ScrollIntoView(entry);
+        _ = ShowEntry(entry);
     }
 
     private void SideList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -970,23 +1081,65 @@ public partial class MainWindow : Window
             _files.Insert(i, item.Entry);
             RebuildSidebar();
         }
-        TabStrip.SelectedItem = _files.FirstOrDefault(f => f.Path == item.Entry.Path);
+        SelectEntry(item.Entry.Path);
     }
 
     private void TabClose_Click(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
         if ((sender as FrameworkElement)?.DataContext is not FileEntry entry) return;
+        CloseTabs(new[] { entry });
+    }
 
-        _closed[entry.Path] = entry.LastWrite;
+    /// <summary>Closes other tabs, keeping pinned ones — pinning means "this stays".</summary>
+    private void TabCloseOthers_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is not FileEntry keep) return;
+        CloseTabs(_files.Where(f => !PathEq(f.Path, keep.Path)).ToList());
+    }
+
+    private void TabCloseAll_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        CloseTabs(_files.ToList());
+    }
+
+    /// <summary>
+    /// Hides tabs until their files are rewritten. Non-destructive: everything stays
+    /// on disk and in the sidebar, greyed, one click from coming back.
+    /// </summary>
+    private void CloseTabs(IReadOnlyCollection<FileEntry> entries)
+    {
+        if (entries.Count == 0) return;
+
+        var order = NavOrder;
+        var currentPath = CurrentEntry?.Path;
+        var fallbackIndex = currentPath is null ? -1 : order.FindIndex(f => PathEq(f.Path, currentPath));
+
+        var pinsChanged = false;
+        foreach (var entry in entries)
+        {
+            _closed[entry.Path] = entry.LastWrite;
+            // Closing a pinned tab unpins it, rather than leaving a pin pointing at a hidden tab
+            pinsChanged |= _pinnedPaths.RemoveAll(p => PathEq(p, entry.Path)) > 0;
+        }
         SaveClosed();
-        var index = _files.IndexOf(entry);
-        if (index < 0) return;
-        var wasSelected = ReferenceEquals(TabStrip.SelectedItem, entry);
-        _files.RemoveAt(index);
+        if (pinsChanged) SavePinned();
+
+        foreach (var entry in entries)
+        {
+            var inMain = _files.FirstOrDefault(f => PathEq(f.Path, entry.Path));
+            if (inMain is not null) _files.Remove(inMain);
+            var inPinned = _pinnedFiles.FirstOrDefault(f => PathEq(f.Path, entry.Path));
+            if (inPinned is not null) _pinnedFiles.Remove(inPinned);
+        }
+
+        PinnedStrip.Visibility = _pinnedFiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         RebuildSidebar();
 
-        if (_files.Count == 0)
+        var remaining = NavOrder;
+        if (remaining.Count == 0)
         {
             TxtEmpty.Visibility = Visibility.Visible;
             Web.Visibility = Visibility.Collapsed;
@@ -995,10 +1148,39 @@ public partial class MainWindow : Window
             Title = "Artifact Viewer";
             _renderedPath = null;
         }
-        else if (wasSelected)
+        else if (CurrentEntry is null)
         {
-            TabStrip.SelectedIndex = Math.Min(index, _files.Count - 1);
+            // Selection went with a closed tab — land on its nearest surviving neighbour
+            var idx = Math.Clamp(fallbackIndex < 0 ? 0 : fallbackIndex, 0, remaining.Count - 1);
+            SelectEntry(remaining[idx].Path);
         }
+        UpdateNavButtons();
+    }
+
+    // ---------- Pinning ----------
+
+    private void TabMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ContextMenu menu) return;
+        if (menu.DataContext is not FileEntry entry) return;
+
+        var pinItem = menu.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "pin");
+        if (pinItem is not null)
+            pinItem.Header = IsPinned(entry.Path) ? "Unpin tab" : "Pin tab";
+    }
+
+    private void TabPin_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is not FileEntry entry) return;
+
+        if (IsPinned(entry.Path)) _pinnedPaths.RemoveAll(p => PathEq(p, entry.Path));
+        else _pinnedPaths.Add(entry.Path);
+        SavePinned();
+
+        // Rescan rebuilds both rows from the pinned list; keep the same artifact showing
+        Rescan(selectLatest: false);
+        SelectEntry(entry.Path);
         UpdateNavButtons();
     }
 
@@ -1029,16 +1211,81 @@ public partial class MainWindow : Window
 
     private void Step(int delta)
     {
-        if (_files.Count == 0) return;
-        var idx = Math.Clamp(TabStrip.SelectedIndex + delta, 0, _files.Count - 1);
-        TabStrip.SelectedIndex = idx;
+        var order = NavOrder;
+        if (order.Count == 0) return;
+        var current = CurrentEntry;
+        var at = current is null ? -1 : order.FindIndex(f => PathEq(f.Path, current.Path));
+        var idx = Math.Clamp((at < 0 ? 0 : at) + delta, 0, order.Count - 1);
+        SelectEntry(order[idx].Path);
     }
 
     private void UpdateNavButtons()
     {
-        BtnPrev.IsEnabled = TabStrip.SelectedIndex > 0;
-        BtnNext.IsEnabled = TabStrip.SelectedIndex >= 0 && TabStrip.SelectedIndex < _files.Count - 1;
-        TxtCounter.Text = _files.Count == 0 ? "" : $"{TabStrip.SelectedIndex + 1} / {_files.Count}";
+        var order = NavOrder;
+        var current = CurrentEntry;
+        var at = current is null ? -1 : order.FindIndex(f => PathEq(f.Path, current.Path));
+
+        BtnPrev.IsEnabled = at > 0;
+        BtnNext.IsEnabled = at >= 0 && at < order.Count - 1;
+        TxtCounter.Text = order.Count == 0 || at < 0 ? "" : $"{at + 1} / {order.Count}";
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern short GetKeyState(int nVirtKey);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    private bool IsForeground()
+    {
+        try
+        {
+            return GetForegroundWindow() == new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        }
+        catch (Exception) { return IsActive; }
+    }
+
+    private static bool IsKeyHeld(int vk) => (GetKeyState(vk) & 0x8000) != 0;
+
+    /// <summary>
+    /// App shortcuts, intercepted from the thread's message queue.
+    /// <para>
+    /// Needed because after every render, keyboard focus sits inside WebView2's own
+    /// child window. Those key messages never reach WPF's input system, so
+    /// <see cref="Window_PreviewKeyDown"/> alone means the shortcuts work exactly once
+    /// — until the first artifact loads. Disabling the browser's accelerator keys
+    /// stops Chromium acting on them but doesn't hand them to WPF either.
+    /// </para>
+    /// Only the app's own combinations are claimed, so typing inside an HTML artifact
+    /// is unaffected.
+    /// </summary>
+    private void OnThreadPreprocessMessage(ref System.Windows.Interop.MSG msg, ref bool handled)
+    {
+        const int WmKeyDown = 0x0100, WmSysKeyDown = 0x0104;
+        if (msg.message != WmKeyDown && msg.message != WmSysKeyDown) return;
+        if (!IsActive) return;   // another window has focus; not ours to claim
+
+        const int VkControl = 0x11, VkMenu = 0x12;
+        const int VkLeft = 0x25, VkRight = 0x27, VkZero = 0x30, VkNumPad0 = 0x60;
+        const int VkAdd = 0x6B, VkSubtract = 0x6D, VkOemPlus = 0xBB, VkOemMinus = 0xBD;
+
+        // Modifiers via Win32: WPF's key state isn't updated by messages aimed at
+        // the WebView2 child window
+        var alt = IsKeyHeld(VkMenu);
+        var ctrl = IsKeyHeld(VkControl);
+        var vk = (int)msg.wParam;
+
+        if (alt && !ctrl)
+        {
+            if (vk == VkLeft) { Step(-1); handled = true; }
+            else if (vk == VkRight) { Step(+1); handled = true; }
+        }
+        else if (ctrl && !alt)
+        {
+            if (vk is VkOemPlus or VkAdd) { StepZoom(+0.1); handled = true; }
+            else if (vk is VkOemMinus or VkSubtract) { StepZoom(-0.1); handled = true; }
+            else if (vk is VkZero or VkNumPad0) { SetZoom(1.0); handled = true; }
+        }
     }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)

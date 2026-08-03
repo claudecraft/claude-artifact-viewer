@@ -54,9 +54,11 @@ no other action needed. If the app isn't running, launch it first:
 file to `%LOCALAPPDATA%\ArtifactViewer\current.txt`. When I say "look at the
 current doc", "the one I'm viewing", or similar — read that file to get the
 path, then read the file it points to. The full tab list (every artifact with
-`open`/`current` flags and timestamps) is in
+`open`/`pinned`/`current` flags and timestamps) is in
 `%LOCALAPPDATA%\ArtifactViewer\tabs.json` — use it for "what's in the viewer",
-"copy all open tabs to X", or targeting a specific tab.
+"copy all open tabs to X", or targeting a specific tab. **Pinned** artifacts sit
+in their own row and are the ones I keep returning to, so prefer them when I
+refer to a document vaguely.
 
 **Driving the viewer (control channel):** write a single line to
 `%LOCALAPPDATA%\ArtifactViewer\command.txt`; the viewer executes it, deletes the

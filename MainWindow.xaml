@@ -244,11 +244,13 @@
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="bg" Property="Background" Value="#2A2A2A"/>
+                                                <Setter TargetName="bg" Property="Background" Value="#313135"/>
                                             </Trigger>
+                                            <!-- Light enough to spot without hunting: the old #2D2D30 was
+                                                 barely a shade off the sidebar's own background -->
                                             <Trigger Property="IsSelected" Value="True">
-                                                <Setter TargetName="bg" Property="Background" Value="#2D2D30"/>
-                                                <Setter TargetName="bg" Property="BorderBrush" Value="#0E9CDB"/>
+                                                <Setter TargetName="bg" Property="Background" Value="#3A4048"/>
+                                                <Setter TargetName="bg" Property="BorderBrush" Value="#35B7F5"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>

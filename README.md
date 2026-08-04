@@ -28,13 +28,13 @@ table to terminal scrollback.
   retries on locked files)
 - **Renders** markdown (GitHub-style via Markdig, syntax-highlighted code
   blocks, ```mermaid diagrams), HTML (full Chromium, JS included), PDF, SVG,
-  images (png/jpg/gif/webp/bmp/ico/avif), txt, json, **video/audio**
+  images (png/jpg/gif/webp/bmp/ico/avif), **video/audio**
   (mp4/webm/mp3/wav), **Word (.docx) and Excel (.xlsx)** via
   docx-preview/SheetJS (CDN-based, no Office install needed; multi-sheet
   workbooks get sheet tabs), **CSV/TSV** as tables (RFC 4180 parsing, so quoted
-  fields containing commas and newlines survive), and **source/config/log
-  files** (.py .js .ts .cs .sql .yaml .log .ps1 and ~20 more) with syntax
-  highlighting
+  fields containing commas and newlines survive), and **source/config/data/log
+  files** (.py .js .ts .cs .sql .yaml .json .txt .log .ps1 and ~20 more) with
+  syntax highlighting
 - **Jupyter notebooks** (`.ipynb`) — markdown cells rendered, code cells
   highlighted, and outputs shown beneath them: stream text, `text/plain`
   results, embedded PNG/JPEG figures, HTML output, and tracebacks with the
@@ -271,7 +271,7 @@ The viewer renders anything that lands in the folder from any source — save a
 PDF from your browser there, `curl -o` an API response, drop in a screenshot.
 If it appears in the folder, it gets a tab.
 
-![A raw JSON file rendered natively](docs/examples/example-any-file.png)
+![A JSON API response dropped into the folder, highlighted on the app's own page](docs/examples/example-any-file.png)
 
 ## Implementation notes
 

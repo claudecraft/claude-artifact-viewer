@@ -296,7 +296,8 @@ internal static class Renderers
         [".bat"] = "dos", [".cmd"] = "dos", [".h"] = "cpp", [".rb"] = "ruby",
         [".jsx"] = "javascript", [".ts"] = "typescript", [".tsx"] = "typescript",
         [".toml"] = "ini", [".cfg"] = "ini", [".conf"] = "ini",
-        [".log"] = "plaintext"
+        // Nothing to tokenize, but the shell's dark page and wrapping still apply
+        [".log"] = "plaintext", [".txt"] = "plaintext"
     };
 
     internal static string BuildCodeHtml(string ext, string text)

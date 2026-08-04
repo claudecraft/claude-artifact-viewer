@@ -37,7 +37,7 @@ no other action needed. If the app isn't running, launch it first:
 - **HTML** (`.html`) — full Chromium, JavaScript and CDN scripts allowed.
   Prefer this for dashboards, charts, and interactive content. Dark background
   suggested (the viewer chrome is dark).
-- **PDF, SVG, PNG/JPG/GIF/WebP, txt, json** — rendered natively.
+- **PDF, SVG, PNG/JPG/GIF/WebP** — rendered natively.
 - **Word (`.docx`) / Excel (`.xlsx`)** — rendered via CDN libraries (needs
   internet). Fine for viewing dropped files; prefer md/html for what you author.
 - **CSV/TSV** — rendered as a table (parsed in-app, handles quoted fields with
@@ -45,9 +45,10 @@ no other action needed. If the app isn't running, launch it first:
 - **Jupyter notebooks** (`.ipynb`) — markdown cells rendered, code highlighted,
   outputs shown (text, PNG/JPEG figures, HTML, tracebacks). Read-only, nothing
   executes. Fine for handing over an analysis complete with its charts.
-- **Code, config, and log files** (`.py` `.js` `.ts` `.cs` `.sql` `.yaml`
-  `.log` `.ps1` `.sh` and more) — syntax-highlighted. Useful for showing a
-  script or log excerpt as a deliverable.
+- **Code, config, data, and log files** (`.py` `.js` `.ts` `.cs` `.sql` `.yaml`
+  `.json` `.txt` `.log` `.ps1` `.sh` and more) — syntax-highlighted on the same
+  dark page as everything else. Useful for showing a script, a JSON payload or a
+  log excerpt as a deliverable.
 - **Video/audio** (`.mp4` `.webm` `.mp3` `.wav`) — native playback.
 
 **Seeing what I see:** the viewer writes the path of the currently displayed

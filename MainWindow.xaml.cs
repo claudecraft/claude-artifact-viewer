@@ -17,11 +17,17 @@ public record SidebarItem(FileEntry Entry, bool IsClosed);
 
 public partial class MainWindow : Window
 {
+    // Everything rendered through the code shell — which is about presentation, not
+    // about being code: .log, .txt and .json are here because Chromium's native view
+    // of a plain-text file is unstyled black-on-white with a "Pretty-print" checkbox,
+    // jarring against the app's own chrome. The shell gives them the dark page and
+    // highlighting the rest of the viewer already has.
     private static readonly string[] CodeExtensions =
     {
         ".py", ".js", ".ts", ".jsx", ".tsx", ".cs", ".sql", ".yaml", ".yml",
-        ".toml", ".xml", ".log", ".ps1", ".sh", ".bat", ".cmd", ".c", ".cpp",
-        ".h", ".java", ".rb", ".go", ".rs", ".php", ".css", ".ini", ".cfg", ".conf"
+        ".toml", ".xml", ".log", ".txt", ".json", ".ps1", ".sh", ".bat", ".cmd",
+        ".c", ".cpp", ".h", ".java", ".rb", ".go", ".rs", ".php", ".css",
+        ".ini", ".cfg", ".conf"
     };
 
     // Artifacts whose source is worth putting on the clipboard as text — the point is
@@ -30,7 +36,7 @@ public partial class MainWindow : Window
     // an image instead, and .pdf/.docx/.xlsx/media copy as nothing.
     private static readonly string[] TextCopyExtensions = new[]
     {
-        ".md", ".markdown", ".txt", ".json", ".csv", ".tsv", ".html", ".htm", ".svg", ".ipynb"
+        ".md", ".markdown", ".csv", ".tsv", ".html", ".htm", ".svg", ".ipynb"
     }.Concat(CodeExtensions).ToArray();
 
     private static readonly string[] ImageCopyExtensions =
@@ -42,7 +48,7 @@ public partial class MainWindow : Window
     {
         ".md", ".markdown", ".ipynb", ".html", ".htm", ".pdf", ".svg",
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif",
-        ".txt", ".json", ".docx", ".xlsx", ".csv", ".tsv",
+        ".docx", ".xlsx", ".csv", ".tsv",
         ".mp4", ".webm", ".mp3", ".wav"
     }.Concat(CodeExtensions).ToArray();
 

@@ -162,10 +162,8 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>   <!-- toolbar -->
-            <RowDefinition Height="Auto"/>   <!-- pinned tabs -->
-            <RowDefinition Height="Auto"/>   <!-- tabs -->
             <RowDefinition Height="Auto"/>   <!-- update notice -->
-            <RowDefinition Height="*"/>      <!-- sidebar + viewer -->
+            <RowDefinition Height="*"/>      <!-- sidebar + document column -->
         </Grid.RowDefinitions>
 
         <!-- Toolbar -->
@@ -200,37 +198,9 @@
             </StackPanel>
         </DockPanel>
 
-        <!-- Pinned row: hidden until something is pinned, like VS -->
-        <ListBox x:Name="PinnedStrip" Grid.Row="1" Background="#232323" BorderThickness="0,0,0,1"
-                 BorderBrush="#333" Visibility="Collapsed"
-                 ItemContainerStyle="{StaticResource TabItemStyle}"
-                 ItemTemplate="{StaticResource TabTemplate}"
-                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
-                 SelectionChanged="PinnedStrip_SelectionChanged">
-            <ListBox.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <StackPanel Orientation="Horizontal"/>
-                </ItemsPanelTemplate>
-            </ListBox.ItemsPanel>
-        </ListBox>
-
-        <!-- Tab strip: one tab per file, oldest → newest -->
-        <ListBox x:Name="TabStrip" Grid.Row="2" Background="#1E1E1E" BorderThickness="0"
-                 ItemContainerStyle="{StaticResource TabItemStyle}"
-                 ItemTemplate="{StaticResource TabTemplate}"
-                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
-                 SelectionChanged="TabStrip_SelectionChanged">
-            <ListBox.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <StackPanel Orientation="Horizontal"/>
-                </ItemsPanelTemplate>
-            </ListBox.ItemsPanel>
-        </ListBox>
-
-        <!-- Update notice: hidden unless a newer release exists -->
-        <Border x:Name="UpdateBanner" Grid.Row="3" Background="#0E4B6E" BorderBrush="#1A6B96"
+        <!-- Update notice: hidden unless a newer release exists. Full window width,
+             like the toolbar — it is about the app, not about the open document. -->
+        <Border x:Name="UpdateBanner" Grid.Row="1" Background="#0E4B6E" BorderBrush="#1A6B96"
                 BorderThickness="0,1,0,1" Padding="12,6" Visibility="Collapsed">
             <DockPanel LastChildFill="False">
                 <TextBlock x:Name="TxtUpdate" DockPanel.Dock="Left" Foreground="#DCEEF8" FontSize="12"
@@ -250,8 +220,8 @@
             </DockPanel>
         </Border>
 
-        <!-- Sidebar + viewer -->
-        <Grid Grid.Row="4">
+        <!-- Sidebar + document column -->
+        <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -348,15 +318,57 @@
                 </ListBox>
             </Border>
 
-            <Border Grid.Column="1" Background="#1E1E1E">
-                <Grid>
-                    <TextBlock x:Name="TxtEmpty" Foreground="#6A6A6A" FontSize="14"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                               TextAlignment="Center"
-                               Text="No artifacts yet.&#x0a;Files dropped into the watched folder will appear here."/>
-                    <wv2:WebView2 x:Name="Web" Visibility="Collapsed"/>
-                </Grid>
-            </Border>
+            <!-- The document and its own chrome. The tab strips belong here rather
+                 than at window width: full-width strips put a tab directly above the
+                 sidebar's first row — the same file named twice, one above the other,
+                 which reads as one muddled block. Keeping them in this column lets the
+                 sidebar run from the toolbar to the bottom, as a sidebar should. -->
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>   <!-- pinned tabs -->
+                    <RowDefinition Height="Auto"/>   <!-- tabs -->
+                    <RowDefinition Height="*"/>      <!-- viewer -->
+                </Grid.RowDefinitions>
+
+                <!-- Pinned row: hidden until something is pinned, like VS -->
+                <ListBox x:Name="PinnedStrip" Grid.Row="0" Background="#232323" BorderThickness="0,0,0,1"
+                         BorderBrush="#333" Visibility="Collapsed"
+                         ItemContainerStyle="{StaticResource TabItemStyle}"
+                         ItemTemplate="{StaticResource TabTemplate}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                         SelectionChanged="PinnedStrip_SelectionChanged">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                </ListBox>
+
+                <!-- Tab strip: one tab per file, oldest → newest -->
+                <ListBox x:Name="TabStrip" Grid.Row="1" Background="#1E1E1E" BorderThickness="0"
+                         ItemContainerStyle="{StaticResource TabItemStyle}"
+                         ItemTemplate="{StaticResource TabTemplate}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                         SelectionChanged="TabStrip_SelectionChanged">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                </ListBox>
+
+                <Border Grid.Row="2" Background="#1E1E1E">
+                    <Grid>
+                        <TextBlock x:Name="TxtEmpty" Foreground="#6A6A6A" FontSize="14"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   TextAlignment="Center"
+                                   Text="No artifacts yet.&#x0a;Files dropped into the watched folder will appear here."/>
+                        <wv2:WebView2 x:Name="Web" Visibility="Collapsed"/>
+                    </Grid>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </Window>

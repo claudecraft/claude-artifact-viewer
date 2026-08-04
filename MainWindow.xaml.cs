@@ -1329,8 +1329,22 @@ public partial class MainWindow : Window
         // The watcher's Deleted event triggers the rescan that removes it from both lists
     }
 
-    private void BtnSidebar_Changed(object sender, RoutedEventArgs e) =>
+    /// <summary>
+    /// Showing the sidebar takes its width out of the tab strip beside it, so a strip
+    /// that was scrolled to the selected tab can end up with that tab half off the
+    /// right edge — and the selected tab is usually the newest one, at the far right.
+    /// Re-scroll after the layout settles, or it stays clipped until the next selection.
+    /// </summary>
+    private void BtnSidebar_Changed(object sender, RoutedEventArgs e)
+    {
         Sidebar.Visibility = BtnSidebar.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (TabStrip.SelectedItem is FileEntry tab) TabStrip.ScrollIntoView(tab);
+            if (PinnedStrip.SelectedItem is FileEntry pinned) PinnedStrip.ScrollIntoView(pinned);
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
 
     private void BtnPrev_Click(object sender, RoutedEventArgs e) => Step(-1);
     private void BtnNext_Click(object sender, RoutedEventArgs e) => Step(+1);

@@ -45,10 +45,15 @@ no other action needed. If the app isn't running, launch it first:
 - **Jupyter notebooks** (`.ipynb`) — markdown cells rendered, code highlighted,
   outputs shown (text, PNG/JPEG figures, HTML, tracebacks). Read-only, nothing
   executes. Fine for handing over an analysis complete with its charts.
-- **Code, config, data, and log files** (`.py` `.js` `.ts` `.cs` `.sql` `.yaml`
+- **Code, config, data, and log files** (`.py` `.js` `.ts` `.cs` `.yaml`
   `.json` `.txt` `.log` `.ps1` `.sh` and more) — syntax-highlighted on the same
   dark page as everything else. Useful for showing a script, a JSON payload or a
   log excerpt as a deliverable.
+- **SQL scripts** (`.sql`) — batches split on `GO` with alternating backgrounds,
+  a sticky header naming the object in view, and a jump index of every
+  definition plus any `-- 1.` numbered steps. Worth knowing when writing one:
+  separate batches with `GO` and number the steps inside a long procedure, and
+  the script becomes navigable rather than a wall.
 - **Video/audio** (`.mp4` `.webm` `.mp3` `.wav`) — native playback.
 
 **Seeing what I see:** the viewer writes the path of the currently displayed

@@ -35,6 +35,9 @@ table to terminal scrollback.
   fields containing commas and newlines survive), and **source/config/data/log
   files** (.py .js .ts .cs .sql .yaml .json .txt .log .ps1 and ~20 more) with
   syntax highlighting
+- **SQL scripts** (`.sql`) get a view of their own — batches banded, a sticky
+  header naming the object you're inside, and a jump index of every definition
+  and numbered step. See [Long SQL scripts](#long-sql-scripts).
 - **Jupyter notebooks** (`.ipynb`) — markdown cells rendered, code cells
   highlighted, and outputs shown beneath them: stream text, `text/plain`
   results, embedded PNG/JPEG figures, HTML output, and tracebacks with the
@@ -272,6 +275,37 @@ PDF from your browser there, `curl -o` an API response, drop in a screenshot.
 If it appears in the folder, it gets a tab.
 
 ![A JSON API response dropped into the folder, highlighted on the app's own page](docs/examples/example-any-file.png)
+
+### Long SQL scripts
+
+A migration script with twenty procedures in it is read by scanning for the next
+definition, and syntax highlighting alone doesn't help with that — every batch
+looks like every other batch. So `.sql` gets a view of its own:
+
+- **Batches are banded.** Each `GO` batch alternates background, so a new
+  definition is a change of colour you catch while scrolling fast, without
+  reading anything.
+- **A sticky header names the object.** Four hundred lines into
+  `spINVOICE_REBUILD_TOTALS`, the header at the top of the window still says so
+   — with the line number, for jumping to the same spot in an editor.
+- **A jump index down the left** lists every `CREATE`/`ALTER`/`DROP` of a
+  procedure, table, view, function, trigger or index. Where the objects share a
+  naming prefix it's stripped from the entries and shown once at the top, so
+  `spINVOICE_REBUILD_TOTALS` reads as `REBUILD_TOTALS` instead of wrapping
+  mid-identifier.
+- **Numbered steps are indexed too.** The `-- 1. validate inputs` convention
+  inside a procedure becomes a nested list, so a long body is navigable by its
+  own structure. Two or more numbered comments in a batch turn this on; a single
+  numbered sentence doesn't.
+- **Click an entry to jump**, and the target stays washed amber until you jump
+  elsewhere. Meanwhile the entry for wherever you're *scrolled* stays
+  highlighted, with its enclosing object marked — so the index answers "where am
+  I" as well as "where can I go".
+
+The parse blanks comments and string literals before looking for boundaries, so
+a commented-out `GO` or a `CREATE TABLE` inside a dynamic-SQL string doesn't
+split anything. A script with no batches and no definitions — an ad-hoc query —
+just gets ordinary highlighting, no chrome.
 
 ## Implementation notes
 

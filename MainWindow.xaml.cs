@@ -1586,6 +1586,19 @@ public partial class MainWindow : Window
             if (gen != _showGeneration) return;
             url = $"https://{Renderers.RenderHost}/csv.html?v={v}";
         }
+        else if (ext == ".sql")
+        {
+            // Scripts are read by scanning for the next definition, so batches get
+            // banded backgrounds, a sticky object header, and a jump index. Falls back
+            // to the plain code shell on its own when there's nothing to delimit.
+            var text = await ReadTextWithRetry(entry.Path);
+            if (gen != _showGeneration) return;
+            if (text is null) { ShowUnreadable(entry); return; }
+            var page = System.IO.Path.Combine(_renderDir, "sql.html");
+            await File.WriteAllTextAsync(page, Renderers.BuildSqlHtml(text));
+            if (gen != _showGeneration) return;
+            url = $"https://{Renderers.RenderHost}/sql.html?v={v}";
+        }
         else if (CodeExtensions.Contains(ext))
         {
             var text = await ReadTextWithRetry(entry.Path);

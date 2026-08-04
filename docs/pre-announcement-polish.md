@@ -37,6 +37,16 @@ Automation (the ☰ control is a `ToggleButton`), and capture the window rect.
 That is how the v1.2.0 layout was verified; worth turning into
 `tools/refresh-screenshots.ps1` while the fixtures are being committed.
 
+## 1b. The SQL view has no screenshot
+
+Added in v1.3.0 and described in the README under *Long SQL scripts*, but the
+one feature that is purely visual is the one with nothing to look at. It needs a
+**synthetic** script — a few procedures with numbered steps and a shared naming
+prefix, so the prefix-stripping and the nested step index both show. Not a real
+one: whatever gets committed as a fixture is published.
+
+Same fixture problem as item 1, so do them together.
+
 ## 2. The trust model is nowhere stated (item 3 of the 2026-08-03 review)
 
 Still proposed, and it is the one deferred item with public-facing risk: an

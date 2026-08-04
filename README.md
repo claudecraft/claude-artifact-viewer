@@ -72,6 +72,11 @@ table to terminal scrollback.
   list to `tabs.json`, so telling Claude Code "look at the current doc" or
   "copy all open tabs somewhere" just works (the included
   [CLAUDE-PROMPT.md](CLAUDE-PROMPT.md) teaches it the conventions)
+- **Copy to clipboard** — right-click a tab → *Copy contents*. Puts the artifact's
+  **source** on the clipboard, not the render, so a script or a table pastes straight
+  into SSMS, an editor or an email. Images offer *Copy image* and copy the bitmap
+  instead; `.pdf`, Office files and media grey the item out. The status line reports
+  what landed (`copied 471 lines → clipboard`).
 - **Export to PDF** — right-click a tab → *Export to PDF…*. Prints the live
   render through a print stylesheet (light page, repeating table headers, page
   numbers in the footer), so what you hand someone matches what you were
@@ -80,11 +85,12 @@ table to terminal scrollback.
   (`.pdf`, audio, video).
 - **Claude can drive the viewer** — a file-based control channel
   (`%LOCALAPPDATA%\ArtifactViewer\command.txt` → `command-result.txt`) with
-  five commands: `capture <png-path>` screenshots the current render (Claude
+  six commands: `capture <png-path>` screenshots the current render (Claude
   can verify the chart it just wrote actually looks right), `show <file>`
   brings an artifact on screen, `scroll-to <heading>` jumps to a section,
   `pdf [pdf-path]` exports the current artifact (defaults to the same name
-  beside the source; never prompts), and `focus [file]` raises the window —
+  beside the source; never prompts), `copy [file]` clipboards an artifact's
+  source, and `focus [file]` raises the window —
   optionally showing a file on the way — for when the viewer is behind your
   editor. Relaunching the exe won't do this: it starts a second instance,
   deliberately, so you can watch two folders at once.

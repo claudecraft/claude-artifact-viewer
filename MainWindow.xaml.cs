@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 
@@ -21,6 +22,20 @@ public partial class MainWindow : Window
         ".py", ".js", ".ts", ".jsx", ".tsx", ".cs", ".sql", ".yaml", ".yml",
         ".toml", ".xml", ".log", ".ps1", ".sh", ".bat", ".cmd", ".c", ".cpp",
         ".h", ".java", ".rb", ".go", ".rs", ".php", ".css", ".ini", ".cfg", ".conf"
+    };
+
+    // Artifacts whose source is worth putting on the clipboard as text — the point is
+    // getting a script or a table out of the viewer and into something else (SSMS, an
+    // editor, an email). Binary and rendered-only formats are excluded; images copy as
+    // an image instead, and .pdf/.docx/.xlsx/media copy as nothing.
+    private static readonly string[] TextCopyExtensions = new[]
+    {
+        ".md", ".markdown", ".txt", ".json", ".csv", ".tsv", ".html", ".htm", ".svg", ".ipynb"
+    }.Concat(CodeExtensions).ToArray();
+
+    private static readonly string[] ImageCopyExtensions =
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"
     };
 
     private static readonly string[] SupportedExtensions = new[]
@@ -635,8 +650,8 @@ public partial class MainWindow : Window
 
     // ---------- Control channel (Claude Code drives the viewer via command.txt) ----------
     // Write "capture [png-path]" | "show <file>" | "scroll-to <heading-or-#id>" |
-    // "pdf [pdf-path]" to %LOCALAPPDATA%\ArtifactViewer\command.txt; the outcome
-    // lands in command-result.txt.
+    // "pdf [pdf-path]" | "copy [file]" | "focus [file]" to
+    // %LOCALAPPDATA%\ArtifactViewer\command.txt; the outcome lands in command-result.txt.
 
     private void StartCommandWatcher()
     {
@@ -692,9 +707,10 @@ public partial class MainWindow : Window
                         "show" => CmdShow(arg),
                         "scroll-to" => await CmdScrollTo(arg),
                         "pdf" => await CmdPdf(arg),
+                        "copy" => CmdCopy(arg),
                         "focus" => CmdFocus(arg),
                         _ => throw new InvalidOperationException(
-                            $"unknown command '{verb}' (capture | show | scroll-to | pdf | focus)")
+                            $"unknown command '{verb}' (capture | show | scroll-to | pdf | copy | focus)")
                     };
                 }
                 catch (Exception ex)
@@ -764,6 +780,22 @@ public partial class MainWindow : Window
             ? System.IO.Path.ChangeExtension(_renderedPath, ".pdf")
             : arg;
         return await ExportPdf(entry, output) ?? throw new InvalidOperationException("export cancelled");
+    }
+
+    /// <summary>
+    /// "copy [file]" — clipboard the named artifact (showing it on the way, like focus
+    /// does) or the current one. Same rules as the tab menu: source text for text-ish
+    /// artifacts, a bitmap for images, an error for anything else.
+    /// </summary>
+    private string CmdCopy(string arg)
+    {
+        var path = string.IsNullOrEmpty(arg)
+            ? _renderedPath ?? throw new InvalidOperationException("nothing rendered yet")
+            : CmdShow(arg);
+
+        var detail = CopyArtifact(path);
+        TxtDate.Text = $"{detail} → clipboard";
+        return $"{detail}: {path}";
     }
 
     private string CmdShow(string arg)
@@ -895,6 +927,69 @@ public partial class MainWindow : Window
         {
             TxtDate.Text = $"export failed: {ex.Message}";
         }
+    }
+
+    // ---------- Copy to clipboard ----------
+
+    private static bool CanCopyText(string path) =>
+        TextCopyExtensions.Contains(System.IO.Path.GetExtension(path).ToLowerInvariant());
+
+    private static bool CanCopyImage(string path) =>
+        ImageCopyExtensions.Contains(System.IO.Path.GetExtension(path).ToLowerInvariant());
+
+    /// <summary>
+    /// WPF's Clipboard has no retrying overload (that one is WinForms), and the single-shot
+    /// call throws CLIPBRD_E_CANT_OPEN whenever another process has the clipboard open.
+    /// </summary>
+    private static void SetClipboard(object payload)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try { Clipboard.SetDataObject(payload, true); return; }
+            catch (System.Runtime.InteropServices.COMException) when (attempt < 5)
+            {
+                System.Threading.Thread.Sleep(100);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Puts an artifact on the clipboard and describes what landed there. Shared by the
+    /// tab menu and the control channel's "copy" so both behave identically.
+    /// </summary>
+    private static string CopyArtifact(string path)
+    {
+        if (!File.Exists(path)) throw new InvalidOperationException("the artifact is no longer on disk");
+
+        if (CanCopyText(path))
+        {
+            var text = File.ReadAllText(path);
+            SetClipboard(text);
+            var lines = text.Length == 0 ? 0 : text.Count(c => c == '\n') + 1;
+            return $"copied {lines:N0} lines";
+        }
+
+        if (CanCopyImage(path))
+        {
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;   // don't hold the file open
+            image.UriSource = new Uri(path);
+            image.EndInit();
+            SetClipboard(image);
+            return "copied image";
+        }
+
+        throw new InvalidOperationException(
+            $"nothing to copy from a {System.IO.Path.GetExtension(path)} artifact");
+    }
+
+    private void TabCopy_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is not FileEntry entry) return;
+        try { TxtDate.Text = $"{CopyArtifact(entry.Path)} → clipboard"; }
+        catch (Exception ex) { TxtDate.Text = $"copy failed: {ex.Message}"; }
     }
 
     // ---------- Keep (promote to a durable folder) ----------
@@ -1183,6 +1278,15 @@ public partial class MainWindow : Window
         var pinItem = menu.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "pin");
         if (pinItem is not null)
             pinItem.Header = IsPinned(entry.Path) ? "Unpin tab" : "Pin tab";
+
+        // Copy says what it will actually put on the clipboard, and greys out where
+        // there is nothing sensible to copy (.pdf, Office files, audio, video)
+        var copyItem = menu.Items.OfType<MenuItem>().FirstOrDefault(m => (m.Tag as string) == "copy");
+        if (copyItem is not null)
+        {
+            copyItem.Header = CanCopyImage(entry.Path) ? "Copy image" : "Copy contents";
+            copyItem.IsEnabled = CanCopyText(entry.Path) || CanCopyImage(entry.Path);
+        }
     }
 
     private void TabPin_Click(object sender, RoutedEventArgs e)

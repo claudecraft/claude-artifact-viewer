@@ -83,6 +83,7 @@
                         </ContextMenu.Resources>
                         <MenuItem Tag="pin" Header="Pin tab" Click="TabPin_Click"/>
                         <Separator/>
+                        <MenuItem Tag="copy" Header="Copy contents" Click="TabCopy_Click"/>
                         <MenuItem Header="Export to PDF…" Click="TabExportPdf_Click"/>
                         <Separator/>
                         <MenuItem Header="Close tab" Click="TabClose_Click"/>

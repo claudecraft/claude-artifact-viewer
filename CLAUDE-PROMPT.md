@@ -78,6 +78,11 @@ ok/error, detail). Commands:
   repeating table headers, page numbers), so the PDF matches what's on screen.
   Never prompts. Not available for `.pdf`/audio/video artifacts. I can do the
   same by right-clicking the tab → *Export to PDF…*.
+- `copy [file]` — put an artifact's source on my clipboard (the named one, shown
+  on the way, or the current one). Use it when I say "copy that" or when I'm
+  about to paste something elsewhere — a SQL script into SSMS, a table into an
+  email. Text-ish artifacts copy their source text, images copy the bitmap,
+  and `.pdf`/Office/media return an error since there is nothing to copy.
 - `focus [file]` — raise the viewer window, optionally showing a file on the
   way. Use when the viewer is likely buried behind an editor and I need to look
   at something. Note: launching the exe again does *not* focus the running

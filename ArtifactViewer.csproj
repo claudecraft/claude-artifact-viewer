@@ -18,7 +18,11 @@
     <Company>claude-artifact-viewer contributors</Company>
     <Copyright>MIT — claude-artifact-viewer contributors</Copyright>
     <Description>Local folder-watching artifact renderer for Claude Code.</Description>
-    <Version>1.0.0</Version>
+    <!-- The update notice compares the latest release tag against this, so a
+         release tag of vX.Y.Z needs this at X.Y.Z or up-to-date installs are
+         told they're behind. The release workflow fails the build if they
+         disagree. -->
+    <Version>1.2.0</Version>
   </PropertyGroup>
 
   <!-- Single-file release defaults, so `dotnet publish -c Release -r win-x64`

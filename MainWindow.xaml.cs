@@ -133,10 +133,11 @@ public partial class MainWindow : Window
     }
 
     // Bump when a vendored library is replaced — mismatched stamp re-extracts
-    private const string VendoredLibsStamp = "mermaid-11.16.0 hljs-11.9.0";
+    private const string VendoredLibsStamp = "mermaid-11.16.0 hljs-11.9.0+ps+dos";
 
     private static readonly string[] VendoredLibs =
-        { "mermaid.min.js", "highlight.min.js", "highlight-dark.min.css" };
+        { "mermaid.min.js", "highlight.min.js", "highlight-dark.min.css",
+          "powershell.min.js", "dos.min.js" };
 
     /// <summary>
     /// Unpacks the vendored render libraries into the render folder, where the

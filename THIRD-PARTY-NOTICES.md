@@ -16,6 +16,12 @@ and cannot change underneath a given release.
 | Mermaid | 11.16.0 | MIT | https://github.com/mermaid-js/mermaid |
 | highlight.js | 11.9.0 | BSD-3-Clause | https://github.com/highlightjs/highlight.js |
 | highlight.js `github-dark` theme | 11.9.0 | BSD-3-Clause | https://github.com/highlightjs/highlight.js |
+| highlight.js `powershell` grammar | 11.9.0 | BSD-3-Clause | https://github.com/highlightjs/highlight.js |
+| highlight.js `dos` grammar | 11.9.0 | BSD-3-Clause | https://github.com/highlightjs/highlight.js |
+
+The two grammar files are separate because the vendored `highlight.min.js` is the
+"common" bundle, which omits them; the full build costs ~1.2 MB for languages
+nothing here maps to. Keep all three at the same highlight.js version.
 
 Mermaid's bundle embeds further MIT-licensed components (d3, dagre, khroma,
 cytoscape and others); their notices are retained inside `mermaid.min.js` itself,

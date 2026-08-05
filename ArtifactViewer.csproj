@@ -53,6 +53,11 @@
     <EmbeddedResource Include="assets\lib\mermaid.min.js" LogicalName="mermaid.min.js" />
     <EmbeddedResource Include="assets\lib\highlight.min.js" LogicalName="highlight.min.js" />
     <EmbeddedResource Include="assets\lib\highlight-dark.min.css" LogicalName="highlight-dark.min.css" />
+    <!-- Grammars absent from highlight.js's "common" bundle. Two files (6 KB)
+         rather than the full build (~1.2 MB) for the two languages the README
+         actually advertises. -->
+    <EmbeddedResource Include="assets\lib\powershell.min.js" LogicalName="powershell.min.js" />
+    <EmbeddedResource Include="assets\lib\dos.min.js" LogicalName="dos.min.js" />
   </ItemGroup>
 
   <ItemGroup>

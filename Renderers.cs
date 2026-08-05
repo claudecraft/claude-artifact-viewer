@@ -844,6 +844,9 @@ internal static class Renderers
             <pre><code class="language-{{lang}}">{{System.Net.WebUtility.HtmlEncode(text)}}</code></pre>
             {{(highlight ? """
             <script src="highlight.min.js"></script>
+            <!-- Not in the "common" bundle; must follow it, since they register onto hljs -->
+            <script src="powershell.min.js"></script>
+            <script src="dos.min.js"></script>
             <script>try { hljs.highlightAll(); } catch (e) { /* plain text is fine */ }</script>
             """ : "")}}
             <script>chrome.webview.postMessage('render-done');</script>
@@ -1046,6 +1049,10 @@ internal static class Renderers
 <body>
 {{body}}
 <script src="https://{{RenderHost}}/highlight.min.js"></script>
+<!-- Not in the "common" bundle; must follow it, since they register onto hljs.
+     A ```powershell fence in a markdown artifact is common enough on Windows. -->
+<script src="https://{{RenderHost}}/powershell.min.js"></script>
+<script src="https://{{RenderHost}}/dos.min.js"></script>
 <script src="https://{{RenderHost}}/mermaid.min.js"></script>
 <script>
   // Everything inside one guarded block: whatever fails, 'render-done' must

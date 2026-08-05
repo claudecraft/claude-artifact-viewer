@@ -47,7 +47,40 @@ one: whatever gets committed as a fixture is published.
 
 Same fixture problem as item 1, so do them together.
 
-## 2. The trust model is nowhere stated (item 3 of the 2026-08-03 review)
+**Fixtures written 2026-08-05** — `docs/examples/fixtures/`, both verified by
+rendering and capturing them:
+
+- `warehouse-procs.sql` — mixed kinds (TABLE / VIEW / PROCEDURE / TRIGGER),
+  8 objects · 9 steps. Also the adversarial case: a `CREATE TABLE` and a `GO`
+  inside a dynamic-SQL string, plus a commented-out `GO`. Neither splits a batch
+  and the dynamic `CREATE` doesn't become a ninth object.
+- `warehouse-reports.sql` — all procedures on a shared `spWHREPORTS_` prefix,
+  5 objects · 4 steps, which is what makes the stripping visible.
+
+**Two fixtures because one can't do both jobs:** `CommonNamePrefix` takes the
+prefix shared by *every* named object, so the `t`/`v`/`sp`/`tr` kind letters of a
+mixed script cut it to nothing. Mixed-kind rendering and prefix stripping are
+mutually exclusive by construction — screenshot whichever sells better, or both.
+
+**Screenshot taken and placed 2026-08-05** — `docs/examples/example-sql.png`,
+in the *Long SQL scripts* section. Shot from `warehouse-procs.sql` scrolled to
+`spWAREHOUSE_RECONCILE_NIGHTLY` (`scroll-to b7`), so one frame carries the
+index, position tracking, nested steps, the sticky header with its line number,
+and the dynamic-SQL block that must not split. The prefix-stripping shot was
+captured and then dropped rather than committed as an orphan asset the README
+never references — regenerate it any time with `show warehouse-reports.sql`
+followed by `capture <path>`, which is the point of committing the fixtures.
+
+**This item is done. Item 1 is not** — the two stale screenshots and the
+six-file demo set still need reconstructing.
+
+## 2. The trust model is nowhere stated (item 3 of the 2026-08-03 review) — **DONE 2026-08-05**
+
+README now carries *"The watch folder is trusted space"* after the network
+table: one origin for the whole folder, HTML artifacts can read every other file
+and reach the network, notebook `text/html` is injected raw, so don't drop
+untrusted `.html`/`.ipynb` in — including by drag & drop. Says why the trade is
+deliberate (CDN dashboards) rather than implying an unfixed hole.
 
 Still proposed, and it is the one deferred item with public-facing risk: an
 announcement brings users who did not write the artifacts they render.
@@ -64,7 +97,19 @@ Fix is one README paragraph, wording in
 stays out of scope: it would break CDN-using dashboards, which are a core use
 case.
 
-## 3. `.ps1`, `.bat` and `.cmd` render unhighlighted
+## 3. `.ps1`, `.bat` and `.cmd` render unhighlighted — **DONE 2026-08-05**
+
+Resolved the cheap way: `powershell.min.js` (4.4 KB) and `dos.min.js` (1.4 KB)
+vendored alongside the common bundle, rather than the ~1.2 MB full build for two
+languages. Both are 11.9.0, matching the core; they `hljs.registerLanguage` onto
+the global, so the script tags must follow `highlight.min.js` — they do, in the
+code shell and the markdown shell (a ```powershell fence is common on Windows).
+Not added to the SQL shell, which only ever renders `.sql`. `VendoredLibsStamp`
+bumped to `hljs-11.9.0+ps+dos` so installed copies re-extract.
+
+Original note follows.
+
+### Original
 
 `HljsLanguage` maps `.ps1` → `powershell` and `.bat`/`.cmd` → `dos`, and the
 README advertises `.ps1` among the highlighted formats, but the vendored

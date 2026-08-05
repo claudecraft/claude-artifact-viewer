@@ -127,6 +127,24 @@ your files:
 Markdown, diagrams, code highlighting, CSV, notebooks, images, PDFs and media
 all render entirely offline.
 
+### The watch folder is trusted space
+
+HTML and notebook artifacts render in full Chromium, and the whole watch folder
+is served as a **single origin** with network access. Any `.html` artifact can
+therefore read every other file in that folder and send it somewhere — and
+notebook `text/html` output is injected as-is.
+
+That is the right trade for artifacts you or your assistant wrote, which is what
+this is for: it's what lets a dashboard pull a charting library and a diagram
+render properly. It does mean the folder should be treated as trusted space —
+**don't drop `.html` or `.ipynb` files from a source you don't trust** into it,
+including via drag & drop. Everything else (markdown, images, PDFs, CSV, code,
+media) is inert by comparison.
+
+Per-file origins and sandboxed notebook output would close this, at the cost of
+breaking the CDN-using dashboards that are a core use case, so it stays a
+documented boundary rather than a code restriction.
+
 ### Is it safe?
 
 Fair question for an unsigned 63 MB binary from an account you've never heard of.
@@ -302,10 +320,21 @@ looks like every other batch. So `.sql` gets a view of its own:
   highlighted, with its enclosing object marked — so the index answers "where am
   I" as well as "where can I go".
 
+![A SQL script in the viewer: jump index down the left with numbered steps nested under each procedure, sticky header naming the current object and its line number](docs/examples/example-sql.png)
+
 The parse blanks comments and string literals before looking for boundaries, so
 a commented-out `GO` or a `CREATE TABLE` inside a dynamic-SQL string doesn't
-split anything. A script with no batches and no definitions — an ad-hoc query —
-just gets ordinary highlighting, no chrome.
+split anything — both are in the script above, at step 3, and neither splits a
+batch or adds a phantom object to the index. A script with no batches and no
+definitions — an ad-hoc query — just gets ordinary highlighting, no chrome.
+
+The script in that screenshot is
+[`docs/examples/fixtures/warehouse-procs.sql`](docs/examples/fixtures/warehouse-procs.sql),
+which is synthetic and committed, so the picture can be regenerated rather than
+reconstructed. Its companion
+[`warehouse-reports.sql`](docs/examples/fixtures/warehouse-reports.sql) is the
+all-procedures case that shows prefix stripping — one script can't demonstrate
+both, since the prefix common to every object in a mixed-kind script is nothing.
 
 ## Implementation notes
 

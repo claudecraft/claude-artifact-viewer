@@ -238,8 +238,16 @@
             <DockPanel LastChildFill="False">
                 <TextBlock x:Name="TxtUpdate" DockPanel.Dock="Left" Foreground="#DCEEF8" FontSize="12"
                            VerticalAlignment="Center" Text=""/>
+                <!-- Self-update: download, verify against the published SHA-256, swap
+                     the exe in place, relaunch. Hidden when it can't work (release has
+                     no exe asset, folder not writable) — manual buttons stay as fallback. -->
+                <Button x:Name="BtnUpdateNow" DockPanel.Dock="Left" Style="{StaticResource NavButton}"
+                        FontSize="12" Margin="10,0,0,0" Padding="8,2" Content="Update now"
+                        FontWeight="SemiBold" Foreground="White" Click="BtnUpdateNow_Click"
+                        Visibility="Collapsed"
+                        ToolTip="Download the new version, verify it, and restart into it — settings and tabs carry over"/>
                 <Button DockPanel.Dock="Left" Style="{StaticResource NavButton}" FontSize="12"
-                        Margin="10,0,0,0" Padding="8,2" Content="Get it"
+                        Margin="4,0,0,0" Padding="8,2" Content="Get it"
                         Foreground="White" Click="BtnUpdate_Click"
                         ToolTip="Open the releases page"/>
                 <!-- The download is a second copy of the exe; this shows which file

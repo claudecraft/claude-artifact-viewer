@@ -418,6 +418,8 @@ public partial class MainWindow : Window
             _initialFile = null;
         }
 
+        CleanupUpdateLeftovers();
+
         // Deliberately last and un-awaited: nothing about startup waits on the network
         _ = CheckForUpdateAsync();
     }
@@ -458,24 +460,24 @@ public partial class MainWindow : Window
     }
 
     // ---------- Update check ----------
-    // The only network request this app makes on its own behalf. It sends nothing
-    // but a User-Agent, runs at most once a day, and is switched off entirely by
-    // setting "checkForUpdates": "false" in settings.json.
+    // The check is the only network request this app makes on its own initiative.
+    // It sends nothing but a User-Agent, runs once per launch, and is switched
+    // off entirely by setting "checkForUpdates": "false" in settings.json. The
+    // download itself only ever happens when the user clicks Update now.
 
     private const string ReleasesApiUrl =
         "https://api.github.com/repos/claudecraft/claude-artifact-viewer/releases/latest";
     private const string ReleasesPageUrl =
         "https://github.com/claudecraft/claude-artifact-viewer/releases/latest";
 
+    private string? _updateTag, _updateExeUrl, _updateShaUrl;
+
     private async Task CheckForUpdateAsync()
     {
         if (string.Equals(LoadSetting("checkForUpdates"), "false", StringComparison.OrdinalIgnoreCase)) return;
 
-        if (DateTime.TryParse(LoadSetting("lastUpdateCheck"), null,
-                System.Globalization.DateTimeStyles.RoundtripKind, out var last)
-            && (DateTime.UtcNow - last).TotalHours < 24) return;
-
-        // Stamped before the request: a failing network shouldn't retry every launch
+        // Every launch, not throttled: one anonymous API call against GitHub's 60/hour
+        // allowance, and Update now makes staying current cheap enough to offer often
         SaveSetting("lastUpdateCheck", DateTime.UtcNow.ToString("o"));
 
         try
@@ -491,16 +493,152 @@ public partial class MainWindow : Window
             var current = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             if (current is null || latest <= current) return;
 
+            _updateTag = tag;
+            if (doc.RootElement.TryGetProperty("assets", out var assets)
+                && assets.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var a in assets.EnumerateArray())
+                {
+                    var name = a.TryGetProperty("name", out var n) ? n.GetString() : null;
+                    var url = a.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
+                    if (name == "ArtifactViewer.exe") _updateExeUrl = url;
+                    else if (name == "ArtifactViewer.exe.sha256") _updateShaUrl = url;
+                }
+            }
+
             TxtUpdate.Text = $"Version {tag} is available — you have v{current.ToString(3)}.";
             BtnUpdateReveal.ToolTip = Environment.ProcessPath is { Length: > 0 } exe
                 ? $"Show the running program in Explorer, so you know which file to replace:\n{exe}"
                 : "Show the running program in Explorer";
+            BtnUpdateNow.Visibility = CanSelfUpdate() ? Visibility.Visible : Visibility.Collapsed;
             UpdateBanner.Visibility = Visibility.Visible;
         }
         catch (Exception)
         {
             // Offline, rate-limited, or GitHub down: staying quiet is the right answer
         }
+    }
+
+    // ---------- Self-update ----------
+    // A running exe can't be overwritten, but it can be renamed: download the new
+    // exe, verify it against the published SHA-256, rename the running file to
+    // .old, move the download into its place, relaunch. Settings, tabs and the
+    // watched folder all live in %LOCALAPPDATA% and carry over untouched — and
+    // because the path never changes, taskbar pins and shortcuts keep working.
+    // A bonus over the manual route: HttpClient downloads carry no Mark-of-the-Web,
+    // so updates skip the SmartScreen warning the browser download gets.
+
+    /// <summary>Self-update needs both release assets and a writable exe location.</summary>
+    private bool CanSelfUpdate()
+    {
+        if (_updateExeUrl is null || _updateShaUrl is null) return false;
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) return false;
+        try
+        {
+            // Probe rather than inspect ACLs: Program Files installs fall back to
+            // the manual buttons instead of failing mid-swap or prompting for admin
+            var probe = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(exe)!,
+                ".av-update-probe-" + Environment.ProcessId);
+            File.WriteAllText(probe, "");
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
+    private void BtnUpdateNow_Click(object sender, RoutedEventArgs e) => _ = InstallUpdateAsync();
+
+    private async Task InstallUpdateAsync()
+    {
+        var exe = Environment.ProcessPath!;
+        var staged = System.IO.Path.Combine(_appDataDir, "ArtifactViewer.exe.update");
+        BtnUpdateNow.IsEnabled = false;
+        try
+        {
+            // 66 MB on hotel wifi outlives the default 100-second timeout
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(15) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("ArtifactViewer");
+
+            TxtUpdate.Text = $"Downloading {_updateTag}…";
+            var expected = (await http.GetStringAsync(_updateShaUrl)).Trim()
+                .Split(' ', '\t')[0];
+
+            using (var response = await http.GetAsync(_updateExeUrl,
+                       System.Net.Http.HttpCompletionOption.ResponseHeadersRead))
+            {
+                response.EnsureSuccessStatusCode();
+                var total = response.Content.Headers.ContentLength;
+                await using var src = await response.Content.ReadAsStreamAsync();
+                await using var dst = new FileStream(staged, FileMode.Create, FileAccess.Write);
+                var buffer = new byte[1 << 16];
+                long done = 0, shownMb = -1;
+                int read;
+                while ((read = await src.ReadAsync(buffer)) > 0)
+                {
+                    await dst.WriteAsync(buffer.AsMemory(0, read));
+                    done += read;
+                    var mb = done >> 20;
+                    if (mb != shownMb && total is > 0)
+                    {
+                        shownMb = mb;
+                        TxtUpdate.Text = $"Downloading {_updateTag} — {mb} / {total >> 20} MB…";
+                    }
+                }
+            }
+
+            TxtUpdate.Text = "Verifying download…";
+            string actual;
+            await using (var f = File.OpenRead(staged))
+                actual = Convert.ToHexString(
+                    await System.Security.Cryptography.SHA256.HashDataAsync(f));
+            if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("the download didn't match its published checksum");
+
+            TxtUpdate.Text = "Installing…";
+            var old = exe + ".old";
+            try { File.Delete(old); } catch (Exception) { /* a previous version still exiting */ }
+            if (File.Exists(old)) old = exe + "." + Environment.ProcessId + ".old";
+            try { File.Move(exe, old); }
+            catch (IOException) { await Task.Delay(500); File.Move(exe, old); } // AV/OneDrive brushing past
+            try { File.Move(staged, exe); }
+            catch (Exception)
+            {
+                File.Move(old, exe); // roll back rather than leave no exe at all
+                throw;
+            }
+
+            TxtUpdate.Text = "Restarting…";
+            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+            Application.Current.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            try { File.Delete(staged); } catch (Exception) { /* nothing staged */ }
+            TxtUpdate.Text = $"Automatic update failed ({ex.Message}) — use Get it to update by hand.";
+            BtnUpdateNow.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Deletes what the last self-update couldn't: the renamed .old exe (locked
+    /// until the old process finished exiting) and any half-downloaded stage file.
+    /// </summary>
+    private void CleanupUpdateLeftovers()
+    {
+        try { File.Delete(System.IO.Path.Combine(_appDataDir, "ArtifactViewer.exe.update")); }
+        catch (Exception) { /* nothing staged, or still writing — next launch gets it */ }
+
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe)) return;
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(
+                         System.IO.Path.GetDirectoryName(exe)!,
+                         System.IO.Path.GetFileName(exe) + "*.old"))
+                try { File.Delete(f); } catch (Exception) { /* old process still exiting */ }
+        }
+        catch (Exception) { /* directory gone or unreadable — nothing to clean */ }
     }
 
     private void BtnUpdate_Click(object sender, RoutedEventArgs e)

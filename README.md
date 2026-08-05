@@ -47,9 +47,13 @@ table to terminal scrollback.
   release renders identically forever. Only Word/Excel reach the network.
 - **Zoom** — `Ctrl +` / `Ctrl -` / `Ctrl 0`, persisted between sessions and
   reapplied as you move between artifacts.
-- **Update notice** — checks GitHub for a newer release at most once a day and
-  shows a dismissible banner. It sends nothing but a User-Agent; turn it off
-  with `"checkForUpdates": "false"` in `settings.json`.
+- **Self-updating** — checks GitHub for a newer release at launch and shows a
+  dismissible banner; **Update now** downloads the new exe, verifies it against
+  the published SHA-256, swaps it in place and restarts — settings, tabs and
+  taskbar pins all survive, and there's no SmartScreen warning on the way. The
+  check sends nothing but a User-Agent; turn it off with
+  `"checkForUpdates": "false"` in `settings.json`. Manual replacement keeps
+  working if you'd rather (or if the exe's folder isn't writable).
 - **Tabs** — one per file, ordered oldest → newest; hover for a ✕ that hides
   the tab without touching the file. Closed state persists across restarts;
   a closed file reopens automatically if it's rewritten. Right-click for
@@ -129,7 +133,7 @@ your files:
 
 | What | When | Opt out |
 |---|---|---|
-| GitHub releases API | once a day at most, to notice a new version | `"checkForUpdates": "false"` in `settings.json` |
+| GitHub releases API | once per launch, to notice a new version; the exe downloads only if you click Update now | `"checkForUpdates": "false"` in `settings.json` |
 | CDN libraries for Word/Excel rendering | only when you open a `.docx` or `.xlsx` | don't open those file types |
 
 Markdown, diagrams, code highlighting, CSV, notebooks, images, PDFs and media

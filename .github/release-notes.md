@@ -1,3 +1,12 @@
+## New in 1.5.0
+
+`scroll-to` (the control-channel command) now navigates every kind of artifact,
+not just ones with headings. It falls through: heading substring, `#anchor`,
+source line or range (`scroll-to 355-367`) on code/log artifacts, then the first
+text match anywhere in the render. Whatever it lands on gets a briefly flashed
+highlight, so your eye goes where the scroll went — ask Claude to "focus on the
+DeleteSavedFilerList method" and the method lights up.
+
 ## Download
 
 **[ArtifactViewer.exe](#assets)** — download it and run it. That's the whole install.

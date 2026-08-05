@@ -170,8 +170,13 @@ What's on offer instead of a signature:
   them against the CDN copies ([notices](THIRD-PARTY-NOTICES.md)).
 - **Or skip the binary entirely** and build from source below — same result.
 
-It isn't code-signed because signing certificates are issued against a verified
-legal identity, which this project doesn't have. SmartScreen's warning means
+It isn't code-signed — a deliberate choice, not an oversight. Certificates are
+issued against a validated publisher identity, and this project publishes under
+a standalone name kept separate from its author's other accounts, so signing it
+properly means establishing that publisher first rather than borrowing an
+identity that isn't the project's. Since SmartScreen reputation accrues per
+certificate, signing under a stopgap name would only have to be undone later.
+Worth doing if downloads ever justify it. Meanwhile, SmartScreen's warning means
 "rarely downloaded", not "known bad".
 
 ### Build from source

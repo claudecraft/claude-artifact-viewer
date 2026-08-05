@@ -91,6 +91,25 @@
                         <MenuItem Header="Close all tabs" Click="TabCloseAll_Click"/>
                     </ContextMenu>
                 </StackPanel.ContextMenu>
+                <!-- Origin badge. Lives in the shared template, not in the team row,
+                     so a pinned team artifact keeps it after moving rows: the row
+                     says what kind of tab it is, this says whose it is. Colour alone
+                     would be a weak signal and no signal at all to a colour-blind
+                     user, so it's a glyph that is present or absent. -->
+                <TextBlock Text="&#x25C6;" FontSize="8" Foreground="#E0A030"
+                           VerticalAlignment="Center" Margin="0,0,5,0"
+                           ToolTip="From the team folder">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Origin}" Value="Team">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
                 <TextBlock Text="{Binding Name}" FontSize="12" VerticalAlignment="Center"/>
                 <Button Click="TabClose_Click" ToolTip="Close (hides until rewritten)"
                         Content="&#x2715;" FontSize="9" Margin="7,0,0,0" Padding="3,1"
@@ -179,14 +198,28 @@
             <ToggleButton x:Name="BtnPin" DockPanel.Dock="Right" Style="{StaticResource PinButton}"
                           Content="&#x1F4CC;" Margin="0,4,6,4" ToolTip="Always on top"
                           Checked="BtnPin_Changed" Unchecked="BtnPin_Changed"/>
-            <Button x:Name="BtnFolder" DockPanel.Dock="Right" Style="{StaticResource NavButton}"
-                    Content="&#x1F4C1;" Margin="0,4,2,4" Click="BtnFolder_Click"
-                    MouseRightButtonUp="BtnFolder_RightClick"
-                    ToolTip="Open watched folder (right-click to change it)"/>
+            <!-- Docked Right, so declaration order runs right-to-left. Keep sits
+                 between the folder and the pin; the two team controls group together
+                 on the far side, away from Keep — the outbound and inbound copies
+                 shouldn't sit side by side looking like each other. -->
             <Button x:Name="BtnKeep" DockPanel.Dock="Right" Style="{StaticResource NavButton}"
                     Content="&#x1F4E5;" Margin="0,4,2,4" Click="BtnKeep_Click"
                     MouseRightButtonUp="BtnKeep_RightClick"
                     ToolTip="Keep: copy this file to your keep folder (right-click to change it)"/>
+            <Button x:Name="BtnFolder" DockPanel.Dock="Right" Style="{StaticResource NavButton}"
+                    Content="&#x1F4C1;" Margin="0,4,2,4" Click="BtnFolder_Click"
+                    MouseRightButtonUp="BtnFolder_RightClick"
+                    ToolTip="Open watched folder (right-click to change it)"/>
+            <!-- Team folder: greyed until one is set, because most people never will.
+                 Opt-in, and invisible in effect until opted into. -->
+            <Button x:Name="BtnTeam" DockPanel.Dock="Right" Style="{StaticResource NavButton}"
+                    Content="&#x1F465;" Margin="0,4,2,4" Click="BtnTeam_Click"
+                    MouseRightButtonUp="BtnTeam_RightClick" Opacity="0.4"
+                    ToolTip="Team folder"/>
+            <Button x:Name="BtnShare" DockPanel.Dock="Right" Style="{StaticResource NavButton}"
+                    Content="&#x1F91D;" Margin="0,4,2,4" Click="BtnShare_Click"
+                    MouseRightButtonUp="BtnShare_RightClick" Visibility="Collapsed"
+                    ToolTip="Share: copy this file to the team folder (right-click to move it)"/>
             <TextBlock x:Name="TxtCounter" DockPanel.Dock="Right" Foreground="#8A8A8A"
                        VerticalAlignment="Center" Margin="0,0,12,0" FontSize="12" Text=""/>
 
@@ -328,6 +361,7 @@
             <Grid Grid.Column="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>   <!-- pinned tabs -->
+                    <RowDefinition Height="Auto"/>   <!-- team tabs -->
                     <RowDefinition Height="Auto"/>   <!-- tabs -->
                     <RowDefinition Height="*"/>      <!-- viewer -->
                 </Grid.RowDefinitions>
@@ -347,8 +381,26 @@
                     </ListBox.ItemsPanel>
                 </ListBox>
 
+                <!-- Team row: artifacts from the shared folder, kept out of the main
+                     strip so a colleague writing a file can't take the view off what
+                     you're reading, and can't wander into your ◀ ▶ history. Hidden
+                     entirely until a team folder is set and has something in it. -->
+                <ListBox x:Name="TeamStrip" Grid.Row="1" Background="#26211A" BorderThickness="0,0,0,1"
+                         BorderBrush="#4A3D28" Visibility="Collapsed"
+                         ItemContainerStyle="{StaticResource TabItemStyle}"
+                         ItemTemplate="{StaticResource TabTemplate}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                         SelectionChanged="TeamStrip_SelectionChanged">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                </ListBox>
+
                 <!-- Tab strip: one tab per file, oldest → newest -->
-                <ListBox x:Name="TabStrip" Grid.Row="1" Background="#1E1E1E" BorderThickness="0"
+                <ListBox x:Name="TabStrip" Grid.Row="2" Background="#1E1E1E" BorderThickness="0"
                          ItemContainerStyle="{StaticResource TabItemStyle}"
                          ItemTemplate="{StaticResource TabTemplate}"
                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
@@ -361,7 +413,7 @@
                     </ListBox.ItemsPanel>
                 </ListBox>
 
-                <Border Grid.Row="2" Background="#1E1E1E">
+                <Border Grid.Row="3" Background="#1E1E1E">
                     <Grid>
                         <TextBlock x:Name="TxtEmpty" Foreground="#6A6A6A" FontSize="14"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"

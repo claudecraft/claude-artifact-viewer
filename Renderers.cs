@@ -20,6 +20,14 @@ internal static class Renderers
     /// <summary>Serves the watch folder — a real https origin, so markdown images and relative asset paths resolve.</summary>
     internal const string VirtualHost = "artifacts.viewer";
 
+    /// <summary>
+    /// Serves the team folder, when one is set. A second host rather than a second
+    /// mapping on the first: one host name maps to exactly one folder, and a team
+    /// artifact has to resolve by its own name without colliding with a file of the
+    /// same name in the watch folder.
+    /// </summary>
+    internal const string TeamHost = "team.viewer";
+
     /// <summary>Serves the render cache folder: the generated pages and the vendored mermaid/highlight.js.</summary>
     internal const string RenderHost = "render.viewer";
 

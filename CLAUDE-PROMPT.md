@@ -66,6 +66,12 @@ path, then read the file it points to. The full tab list (every artifact with
 in their own row and are the ones I keep returning to, so prefer them when I
 refer to a document vaguely.
 
+Each tab also carries an **`origin`**: `mine` or `team`. A `team` artifact came
+from a shared folder that colleagues also write to — **never overwrite or delete
+one**, and don't count them as my work when summarising what's in the viewer.
+Write new artifacts into my own watch folder and use `share` to send a copy over,
+rather than writing into the team folder directly.
+
 **Driving the viewer (control channel):** write a single line to
 `%LOCALAPPDATA%\ArtifactViewer\command.txt`; the viewer executes it, deletes the
 file, and writes the outcome to `command-result.txt` (JSON: command, status
@@ -89,6 +95,12 @@ ok/error, detail). Commands:
   about to paste something elsewhere — a SQL script into SSMS, a table into an
   email. Text-ish artifacts copy their source text, images copy the bitmap,
   and `.pdf`/Office/media return an error since there is nothing to copy.
+- `share [--move] [file]` — put an artifact into my **team folder**, a shared
+  folder colleagues also watch. Use it when I say "share this with the team",
+  "send this to Xiaoyi", or similar. **Copies** by default, leaving mine where it
+  is; only pass `--move` if I actually said to move it, since moving takes the
+  artifact out of my own folder. Errors if I haven't set a team folder — tell me
+  to set one with the 👥 button rather than trying to create one.
 - `focus [file]` — raise the viewer window, optionally showing a file on the
   way. Use when the viewer is likely buried behind an editor and I need to look
   at something. Note: launching the exe again does *not* focus the running

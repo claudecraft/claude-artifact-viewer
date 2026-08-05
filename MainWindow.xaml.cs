@@ -11,7 +11,15 @@ using Microsoft.Web.WebView2.Core;
 
 namespace ArtifactViewer;
 
-public record FileEntry(string Path, string Name, DateTime LastWrite);
+/// <summary>
+/// Which folder an artifact came from. Origin is an attribute of the file, not of
+/// the row it happens to sit in — a pinned team artifact moves to the pinned row
+/// and keeps its badge — so it travels on the entry rather than on the collection.
+/// </summary>
+public enum ArtifactOrigin { Mine, Team }
+
+public record FileEntry(string Path, string Name, DateTime LastWrite,
+                        ArtifactOrigin Origin = ArtifactOrigin.Mine);
 
 public record SidebarItem(FileEntry Entry, bool IsClosed);
 
@@ -62,6 +70,13 @@ public partial class MainWindow : Window
     private bool _processingCommand;
     private readonly ObservableCollection<FileEntry> _files = new();
     private readonly ObservableCollection<FileEntry> _pinnedFiles = new();
+    private readonly ObservableCollection<FileEntry> _teamFiles = new();
+
+    // Opt-in second watch folder — a folder shared with colleagues (Dropbox, a
+    // network share). Null until set, and while it's null nothing about the app
+    // changes: no extra watcher, no third row, a greyed toolbar button.
+    private string? _teamDir;
+    private FileSystemWatcher? _teamWatcher;
     // Ordered so the pinned row keeps the order you pinned things in
     private readonly List<string> _pinnedPaths = new();
     private string _pinnedStatePath = "";
@@ -322,8 +337,11 @@ public partial class MainWindow : Window
         // Before the first Rescan, so it's simply there as the newest artifact
         SeedWelcomeArtifact();
 
+        _teamDir = LoadSetting("teamDir") is { Length: > 0 } t && Directory.Exists(t) ? t : null;
+
         TabStrip.ItemsSource = _files;
         PinnedStrip.ItemsSource = _pinnedFiles;
+        TeamStrip.ItemsSource = _teamFiles;
         SideList.ItemsSource = _allFiles;
         System.Windows.Interop.ComponentDispatcher.ThreadPreprocessMessage += OnThreadPreprocessMessage;
         Loaded += MainWindow_Loaded;
@@ -389,6 +407,7 @@ public partial class MainWindow : Window
 
         StartWatcher();
         StartCommandWatcher();
+        UpdateTeamButton();
         Rescan(selectLatest: true);
 
         if (_initialFile is not null)
@@ -530,6 +549,42 @@ public partial class MainWindow : Window
         _watcher.Changed += onChange;
         _watcher.Deleted += onChange;
         _watcher.Renamed += (_, _) => Dispatcher.Invoke(BumpDebounce);
+
+        StartTeamWatcher();
+    }
+
+    /// <summary>
+    /// Watches the team folder, if one is configured. Separate watcher rather than a
+    /// recursive one: the folders are unrelated paths, and a shared folder is somebody
+    /// else's disk as far as reliability goes — losing it shouldn't take the main
+    /// watcher with it. Shares the debounce, so a burst across both folders is one rescan.
+    /// </summary>
+    private void StartTeamWatcher()
+    {
+        _teamWatcher?.Dispose();
+        _teamWatcher = null;
+        if (_teamDir is null || !Directory.Exists(_teamDir)) return;
+
+        try
+        {
+            _teamWatcher = new FileSystemWatcher(_teamDir)
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true
+            };
+            FileSystemEventHandler onChange = (_, _) => Dispatcher.Invoke(BumpDebounce);
+            _teamWatcher.Created += onChange;
+            _teamWatcher.Changed += onChange;
+            _teamWatcher.Deleted += onChange;
+            _teamWatcher.Renamed += (_, _) => Dispatcher.Invoke(BumpDebounce);
+        }
+        catch (Exception)
+        {
+            // An unreachable share shouldn't stop the app: the folder simply
+            // contributes nothing until the next rescan finds it again.
+            _teamWatcher = null;
+        }
     }
 
     private void BumpDebounce()
@@ -538,14 +593,25 @@ public partial class MainWindow : Window
         _debounce.Start();
     }
 
-    private void Rescan(bool selectLatest)
-    {
-        var scanned = Directory.EnumerateFiles(_watchDir)
+    private static List<FileEntry> ScanFolder(string dir, ArtifactOrigin origin) =>
+        Directory.EnumerateFiles(dir)
             .Where(f => SupportedExtensions.Contains(System.IO.Path.GetExtension(f).ToLowerInvariant()))
             .Select(f => new FileInfo(f))
             .OrderBy(fi => fi.LastWriteTime)
-            .Select(fi => new FileEntry(fi.FullName, fi.Name, fi.LastWriteTime))
+            .Select(fi => new FileEntry(fi.FullName, fi.Name, fi.LastWriteTime, origin))
             .ToList();
+
+    private void Rescan(bool selectLatest)
+    {
+        var scanned = ScanFolder(_watchDir, ArtifactOrigin.Mine);
+        // A shared folder can be offline, syncing, or gone; it must never take the
+        // main folder down with it, so it's scanned defensively and separately.
+        if (_teamDir is not null)
+        {
+            try { scanned = scanned.Concat(ScanFolder(_teamDir, ArtifactOrigin.Team)).ToList(); }
+            catch (Exception) { /* unreachable share: contributes nothing this pass */ }
+        }
+        scanned = scanned.OrderBy(f => f.LastWrite).ToList();
 
         // A closed file that has since been rewritten counts as a new artifact — reopen it
         var closedChanged = false;
@@ -558,9 +624,16 @@ public partial class MainWindow : Window
         // folder, so pruning on absence alone throws away state for every other
         // folder's artifacts the moment the app is pointed somewhere else.
         var onDisk = new HashSet<string>(scanned.Select(f => f.Path), StringComparer.OrdinalIgnoreCase);
-        bool GoneFromWatchedFolder(string path) =>
-            !onDisk.Contains(path)
-            && PathEq(System.IO.Path.GetDirectoryName(path) ?? "", _watchDir.TrimEnd('\\'));
+        bool GoneFromWatchedFolder(string path)
+        {
+            if (onDisk.Contains(path)) return false;
+            var dir = System.IO.Path.GetDirectoryName(path) ?? "";
+            // The team folder is watched too, so its files earn the same pruning —
+            // but only while it's actually configured, or unsetting it would discard
+            // the closed and pinned state of everything that came from there.
+            return PathEq(dir, _watchDir.TrimEnd('\\'))
+                || (_teamDir is not null && PathEq(dir, _teamDir.TrimEnd('\\')));
+        }
 
         foreach (var gone in _closed.Keys.Where(GoneFromWatchedFolder).ToList())
             closedChanged |= _closed.Remove(gone);
@@ -577,29 +650,40 @@ public partial class MainWindow : Window
             .Where(f => f is not null)
             .Select(f => f!)
             .ToList();
+        // Pinning wins over origin: a pinned team artifact sits in the pinned row and
+        // keeps its badge. Row says what kind of tab it is, the badge says whose it is.
         var unpinned = open.Where(f => !IsPinned(f.Path)).ToList();
+        var mine = unpinned.Where(f => f.Origin == ArtifactOrigin.Mine).ToList();
+        var team = unpinned.Where(f => f.Origin == ArtifactOrigin.Team).ToList();
 
         var selectedPath = CurrentEntry?.Path;
-        // A pinned tab shouldn't be yanked away by a newly written artifact
+        // A pinned tab shouldn't be yanked away by a newly written artifact — and
+        // neither should a team one, which is the whole reason team has its own row:
+        // a colleague writing a file must never pull the view off what you're reading.
         var onPinned = selectedPath is not null && IsPinned(selectedPath);
+        var onTeam = selectedPath is not null && team.Any(f => PathEq(f.Path, selectedPath));
         var wasAtLatest = selectLatest
-            || (!onPinned && (_files.Count == 0 || selectedPath == _files[^1].Path));
+            || (!onPinned && !onTeam && (_files.Count == 0 || selectedPath == _files[^1].Path));
 
         _syncingSelection = true;
         _files.Clear();
-        foreach (var f in unpinned) _files.Add(f);
+        foreach (var f in mine) _files.Add(f);
         _pinnedFiles.Clear();
         foreach (var f in pinned) _pinnedFiles.Add(f);
+        _teamFiles.Clear();
+        foreach (var f in team) _teamFiles.Add(f);
         _syncingSelection = false;
         PinnedStrip.Visibility = _pinnedFiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        TeamStrip.Visibility = _teamFiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         RebuildSidebar();
 
-        // Counts both rows: everything open could be pinned, leaving _files empty
+        // Counts every row: everything open could be pinned or shared, leaving _files empty
         var order = NavOrder;
-        TxtEmpty.Visibility = order.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        Web.Visibility = order.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        var allTabs = AllTabs;
+        TxtEmpty.Visibility = allTabs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        Web.Visibility = allTabs.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
 
-        if (order.Count == 0)
+        if (allTabs.Count == 0)
         {
             TxtTitle.Text = "Waiting for artifacts…";
             TxtDate.Text = "";
@@ -609,11 +693,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        // "Latest" means the newest unpinned artifact, falling back to the pinned row
-        var newest = _files.Count > 0 ? _files[^1] : order[^1];
+        // "Latest" means the newest artifact of your own, falling back to the pinned
+        // row, and only then to team — so a folder holding nothing but shared files
+        // still shows something rather than an empty pane.
+        var newest = _files.Count > 0 ? _files[^1]
+                   : order.Count > 0 ? order[^1]
+                   : allTabs[^1];
         var target = wasAtLatest
             ? newest
-            : order.FirstOrDefault(f => PathEq(f.Path, selectedPath ?? "")) ?? newest;
+            : allTabs.FirstOrDefault(f => PathEq(f.Path, selectedPath ?? "")) ?? newest;
 
         // Selecting triggers the strip's SelectionChanged → ShowEntry. If the selection
         // is unchanged but the file was rewritten, force a re-render.
@@ -647,6 +735,9 @@ public partial class MainWindow : Window
                 lastWrite = f.LastWrite,
                 open = !_closed.ContainsKey(f.Path),
                 pinned = IsPinned(f.Path),
+                // So an assistant reading this can tell whose artifact it is — and be
+                // told to leave the team ones alone
+                origin = f.Origin == ArtifactOrigin.Team ? "team" : "mine",
                 current = string.Equals(f.Path, _renderedPath, StringComparison.OrdinalIgnoreCase)
             });
             File.WriteAllText(System.IO.Path.Combine(_appDataDir, "tabs.json"),
@@ -715,9 +806,10 @@ public partial class MainWindow : Window
                         "scroll-to" => await CmdScrollTo(arg),
                         "pdf" => await CmdPdf(arg),
                         "copy" => CmdCopy(arg),
+                        "share" => CmdShare(arg),
                         "focus" => CmdFocus(arg),
                         _ => throw new InvalidOperationException(
-                            $"unknown command '{verb}' (capture | show | scroll-to | pdf | copy | focus)")
+                            $"unknown command '{verb}' (capture | show | scroll-to | pdf | copy | share | focus)")
                     };
                 }
                 catch (Exception ex)
@@ -794,6 +886,36 @@ public partial class MainWindow : Window
     /// does) or the current one. Same rules as the tab menu: source text for text-ish
     /// artifacts, a bitmap for images, an error for anything else.
     /// </summary>
+    /// <summary>
+    /// "share [--move] [file]" — puts the current artifact, or a named one, into the
+    /// team folder. Copies by default; --move is opt-in, because an assistant asked to
+    /// share something shouldn't quietly remove it from your own folder. Deliberately
+    /// never prompts for a folder: running unattended, it must fail with a message
+    /// rather than open a dialog nobody is there to see.
+    /// </summary>
+    private string CmdShare(string arg)
+    {
+        var move = false;
+        if (arg.StartsWith("--move", StringComparison.OrdinalIgnoreCase))
+        {
+            move = true;
+            arg = arg[6..].Trim().Trim('"');
+        }
+
+        var path = string.IsNullOrEmpty(arg)
+            ? _renderedPath ?? throw new InvalidOperationException("nothing rendered yet")
+            : CmdShow(arg);
+
+        var dst = ShareToTeam(path, move);
+        TxtDate.Text = $"{(move ? "moved" : "shared")} → {System.IO.Path.GetFileName(dst)}";
+        if (move)
+        {
+            Rescan(selectLatest: false);
+            SelectEntry(dst);
+        }
+        return dst;
+    }
+
     private string CmdCopy(string arg)
     {
         var path = string.IsNullOrEmpty(arg)
@@ -818,9 +940,11 @@ public partial class MainWindow : Window
         if (_closed.Remove(entry.Path))
         {
             SaveClosed();
+            var row = entry.Origin == ArtifactOrigin.Team ? _teamFiles : _files;
             var i = 0;
-            while (i < _files.Count && _files[i].LastWrite <= entry.LastWrite) i++;
-            _files.Insert(i, entry);
+            while (i < row.Count && row[i].LastWrite <= entry.LastWrite) i++;
+            row.Insert(i, entry);
+            if (entry.Origin == ArtifactOrigin.Team) TeamStrip.Visibility = Visibility.Visible;
             RebuildSidebar();
         }
         SelectEntry(entry.Path);
@@ -1039,6 +1163,140 @@ public partial class MainWindow : Window
 
     private void BtnKeep_RightClick(object sender, MouseButtonEventArgs e) => PickKeepDir();
 
+    // ---------- Team folder ----------
+    // A second, opt-in watch folder shared with colleagues — a synced folder both
+    // machines already have, so there's no server, no port and no discovery here.
+    // Unset by default, and while unset the app behaves exactly as it did before it.
+
+    /// <summary>Greys the button until a team folder exists, and names it in the tooltip.</summary>
+    private void UpdateTeamButton()
+    {
+        var set = _teamDir is not null;
+        BtnTeam.Opacity = set ? 1.0 : 0.4;
+        BtnTeam.ToolTip = set
+            ? $"Team folder: {_teamDir}\nClick to open · right-click to change or clear"
+            : "Team folder (not set) — click to choose a shared folder to watch alongside yours";
+
+        // Nothing to share into until there's a team folder, so the button isn't there
+        BtnShare.Visibility = set ? Visibility.Visible : Visibility.Collapsed;
+
+        // Team artifacts are served from their own origin; without this a team PDF,
+        // image or HTML resolves against the watch folder and 404s.
+        if (_webReady)
+        {
+            try
+            {
+                Web.CoreWebView2.ClearVirtualHostNameToFolderMapping(Renderers.TeamHost);
+                if (set)
+                    Web.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                        Renderers.TeamHost, _teamDir!, CoreWebView2HostResourceAccessKind.Allow);
+            }
+            catch (Exception) { /* nothing mapped yet: Clear on an absent host throws */ }
+        }
+    }
+
+    private bool PickTeamDir()
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Choose a shared team folder to watch alongside your own"
+        };
+        if (dlg.ShowDialog(this) != true) return false;
+
+        // Watching your own folder twice would double every tab
+        if (PathEq(dlg.FolderName, _watchDir.TrimEnd('\\')))
+        {
+            MessageBox.Show(this,
+                "That's the folder already being watched. Pick a different one to share with your team.",
+                "Team folder", MessageBoxButton.OK, MessageBoxImage.Information);
+            return false;
+        }
+
+        SetTeamDir(dlg.FolderName);
+        return true;
+    }
+
+    private void SetTeamDir(string? dir)
+    {
+        _teamDir = dir;
+        SaveSetting("teamDir", dir ?? "");
+        StartTeamWatcher();
+        UpdateTeamButton();
+        Rescan(selectLatest: false);
+    }
+
+    private void BtnTeam_Click(object sender, RoutedEventArgs e)
+    {
+        if (_teamDir is null || !Directory.Exists(_teamDir)) { PickTeamDir(); return; }
+        try { Process.Start(new ProcessStartInfo(_teamDir) { UseShellExecute = true }); }
+        catch (Exception) { /* the folder went away; the next rescan notices */ }
+    }
+
+    private void BtnTeam_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_teamDir is null) { PickTeamDir(); return; }
+
+        var answer = MessageBox.Show(this,
+            $"Team folder is:\n{_teamDir}\n\nYes — choose a different folder\nNo — stop watching it\nCancel — leave it alone",
+            "Team folder", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+
+        if (answer == MessageBoxResult.Yes) PickTeamDir();
+        // Clearing only stops watching. Nothing on disk is touched, and the closed
+        // and pinned state of those artifacts survives for if it's set again.
+        else if (answer == MessageBoxResult.No) SetTeamDir(null);
+    }
+
+    /// <summary>
+    /// Copies an artifact into the team folder — the outbound half of sharing, and
+    /// the twin of Keep. Overwrites by name, matching drag &amp; drop: sharing a
+    /// revised version of the same deliverable is the common case, and a synced
+    /// folder makes its own conflicted copy if two people write at once.
+    /// </summary>
+    private string ShareToTeam(string sourcePath, bool move = false)
+    {
+        if (_teamDir is null) throw new InvalidOperationException(
+            "no team folder set — click the team folder button in the toolbar to choose one");
+        if (!Directory.Exists(_teamDir)) throw new InvalidOperationException(
+            $"team folder is unreachable: {_teamDir}");
+        if (PathEq(System.IO.Path.GetDirectoryName(sourcePath) ?? "", _teamDir.TrimEnd('\\')))
+            throw new InvalidOperationException("that artifact is already in the team folder");
+
+        var dst = System.IO.Path.Combine(_teamDir, System.IO.Path.GetFileName(sourcePath));
+        if (move) File.Move(sourcePath, dst, overwrite: true);
+        else File.Copy(sourcePath, dst, overwrite: true);
+        return dst;
+    }
+
+    /// <summary>
+    /// Left-click copies, right-click moves. Copy is the default because the watch
+    /// folder is where your own history lives and sharing shouldn't empty it; move is
+    /// there for the handoff case, where the artifact was only ever for them.
+    /// </summary>
+    private void BtnShare_Click(object sender, RoutedEventArgs e) => Share(move: false);
+
+    private void BtnShare_RightClick(object sender, MouseButtonEventArgs e) => Share(move: true);
+
+    private void Share(bool move)
+    {
+        if (_renderedPath is null || !File.Exists(_renderedPath)) return;
+        if (_teamDir is null && !PickTeamDir()) return;
+
+        try
+        {
+            var dst = ShareToTeam(_renderedPath, move);
+            TxtDate.Text = $"{(move ? "moved" : "shared")} → {System.IO.Path.GetFileName(dst)}";
+            // Only a move needs following: it leaves the old path dead, so the
+            // selection has to land on the team copy. A copy leaves you on your own
+            // artifact, which is where you were working.
+            if (move)
+            {
+                Rescan(selectLatest: false);
+                SelectEntry(dst);
+            }
+        }
+        catch (Exception ex) { TxtDate.Text = $"share failed: {ex.Message}"; }
+    }
+
     // ---------- Drag & drop ----------
 
     private void Window_DragOver(object sender, DragEventArgs e)
@@ -1124,26 +1382,38 @@ public partial class MainWindow : Window
     /// them, so exactly one of the strips has a selected item at a time.
     /// </summary>
     private FileEntry? CurrentEntry =>
-        (PinnedStrip.SelectedItem as FileEntry) ?? (TabStrip.SelectedItem as FileEntry);
+        (PinnedStrip.SelectedItem as FileEntry)
+        ?? (TabStrip.SelectedItem as FileEntry)
+        ?? (TeamStrip.SelectedItem as FileEntry);
 
-    /// <summary>Navigation order: pinned row first, then the chronological row.</summary>
+    /// <summary>
+    /// Arrow-key and ◀ ▶ order: pinned row, then your own chronological row.
+    /// Team artifacts are deliberately absent — stepping back through your own work
+    /// shouldn't walk through a colleague's. They're reachable by clicking their tab.
+    /// </summary>
     private List<FileEntry> NavOrder => _pinnedFiles.Concat(_files).ToList();
 
-    /// <summary>Selects an artifact in whichever row holds it, clearing the other.</summary>
+    /// <summary>Every open tab across all three rows, for "is anything showing at all".</summary>
+    private List<FileEntry> AllTabs => _pinnedFiles.Concat(_files).Concat(_teamFiles).ToList();
+
+    /// <summary>Selects an artifact in whichever row holds it, clearing the others.</summary>
     private void SelectEntry(string path)
     {
         var pinnedMatch = _pinnedFiles.FirstOrDefault(f => PathEq(f.Path, path));
         var openMatch = _files.FirstOrDefault(f => PathEq(f.Path, path));
-        if (pinnedMatch is null && openMatch is null) return;
+        var teamMatch = _teamFiles.FirstOrDefault(f => PathEq(f.Path, path));
+        if (pinnedMatch is null && openMatch is null && teamMatch is null) return;
 
-        // Clear the other row silently, so only the real selection raises an event
+        // Clear the other rows silently, so only the real selection raises an event
         _syncingSelection = true;
-        if (pinnedMatch is not null) TabStrip.SelectedItem = null;
-        else PinnedStrip.SelectedItem = null;
+        if (pinnedMatch is null) PinnedStrip.SelectedItem = null;
+        if (pinnedMatch is not null || teamMatch is not null) TabStrip.SelectedItem = null;
+        if (pinnedMatch is not null || openMatch is not null) TeamStrip.SelectedItem = null;
         _syncingSelection = false;
 
         if (pinnedMatch is not null) PinnedStrip.SelectedItem = pinnedMatch;
-        else TabStrip.SelectedItem = openMatch;
+        else if (openMatch is not null) TabStrip.SelectedItem = openMatch;
+        else TeamStrip.SelectedItem = teamMatch;
     }
 
     private void TabStrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1153,6 +1423,7 @@ public partial class MainWindow : Window
         {
             _syncingSelection = true;
             PinnedStrip.SelectedItem = null;
+            TeamStrip.SelectedItem = null;
             _syncingSelection = false;
             OnEntrySelected(entry, TabStrip);
         }
@@ -1166,8 +1437,23 @@ public partial class MainWindow : Window
         {
             _syncingSelection = true;
             TabStrip.SelectedItem = null;
+            TeamStrip.SelectedItem = null;
             _syncingSelection = false;
             OnEntrySelected(entry, PinnedStrip);
+        }
+        UpdateNavButtons();
+    }
+
+    private void TeamStrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingSelection) return;
+        if (TeamStrip.SelectedItem is FileEntry entry)
+        {
+            _syncingSelection = true;
+            TabStrip.SelectedItem = null;
+            PinnedStrip.SelectedItem = null;
+            _syncingSelection = false;
+            OnEntrySelected(entry, TeamStrip);
         }
         UpdateNavButtons();
     }
@@ -1194,9 +1480,12 @@ public partial class MainWindow : Window
             // Clicking a greyed (closed) doc reopens its tab
             _closed.Remove(item.Entry.Path);
             SaveClosed();
+            // Reopen into the row the artifact belongs to, not always the main one
+            var row = item.Entry.Origin == ArtifactOrigin.Team ? _teamFiles : _files;
             var i = 0;
-            while (i < _files.Count && _files[i].LastWrite <= item.Entry.LastWrite) i++;
-            _files.Insert(i, item.Entry);
+            while (i < row.Count && row[i].LastWrite <= item.Entry.LastWrite) i++;
+            row.Insert(i, item.Entry);
+            if (item.Entry.Origin == ArtifactOrigin.Team) TeamStrip.Visibility = Visibility.Visible;
             RebuildSidebar();
         }
         SelectEntry(item.Entry.Path);
@@ -1251,12 +1540,15 @@ public partial class MainWindow : Window
             if (inMain is not null) _files.Remove(inMain);
             var inPinned = _pinnedFiles.FirstOrDefault(f => PathEq(f.Path, entry.Path));
             if (inPinned is not null) _pinnedFiles.Remove(inPinned);
+            var inTeam = _teamFiles.FirstOrDefault(f => PathEq(f.Path, entry.Path));
+            if (inTeam is not null) _teamFiles.Remove(inTeam);
         }
 
         PinnedStrip.Visibility = _pinnedFiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        TeamStrip.Visibility = _teamFiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         RebuildSidebar();
 
-        var remaining = NavOrder;
+        var remaining = AllTabs;
         if (remaining.Count == 0)
         {
             TxtEmpty.Visibility = Visibility.Visible;
@@ -1344,6 +1636,7 @@ public partial class MainWindow : Window
         {
             if (TabStrip.SelectedItem is FileEntry tab) TabStrip.ScrollIntoView(tab);
             if (PinnedStrip.SelectedItem is FileEntry pinned) PinnedStrip.ScrollIntoView(pinned);
+            if (TeamStrip.SelectedItem is FileEntry shared) TeamStrip.ScrollIntoView(shared);
         }, System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
@@ -1366,8 +1659,12 @@ public partial class MainWindow : Window
         var current = CurrentEntry;
         var at = current is null ? -1 : order.FindIndex(f => PathEq(f.Path, current.Path));
 
-        BtnPrev.IsEnabled = at > 0;
-        BtnNext.IsEnabled = at >= 0 && at < order.Count - 1;
+        // A team artifact isn't in the navigable order, so `at` is -1 while one is
+        // showing. Leave the arrows live anyway — they're the way back into your own
+        // stream, and disabling them would strand you on a colleague's tab.
+        var offOrder = at < 0 && current is not null && order.Count > 0;
+        BtnPrev.IsEnabled = at > 0 || offOrder;
+        BtnNext.IsEnabled = (at >= 0 && at < order.Count - 1) || offOrder;
         TxtCounter.Text = order.Count == 0 || at < 0 ? "" : $"{at + 1} / {order.Count}";
     }
 
@@ -1625,7 +1922,8 @@ public partial class MainWindow : Window
         {
             // Served through the virtual host so Chromium handles it natively
             // (PDF viewer, images, media playback, HTML with relative asset paths, etc.)
-            url = $"https://{Renderers.VirtualHost}/{Uri.EscapeDataString(entry.Name)}";
+            var host = entry.Origin == ArtifactOrigin.Team ? Renderers.TeamHost : Renderers.VirtualHost;
+            url = $"https://{host}/{Uri.EscapeDataString(entry.Name)}";
         }
 
         // Rendering something means the empty state is over. Set here rather than at

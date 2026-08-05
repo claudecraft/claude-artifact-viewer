@@ -68,6 +68,11 @@ table to terminal scrollback.
   (right-click to set it). The watch folder is a scratchpad; Keep is the
   one-way valve to your durable store (an Obsidian vault inbox, a project
   docs folder, wherever). Never overwrites — collisions get a numbered suffix.
+- **👥 Team folder** *(optional)* — watch a second, shared folder alongside your
+  own, so artifacts a colleague writes appear in your viewer. Its tabs get their
+  own row and a ◆ badge, and they never steal the view or enter your ◀ ▶
+  history. Off until you set one, and invisible until you do. See
+  [Team folder](#team-folder-optional).
 - **Drag & drop** — drop files anywhere on the window to copy them into the
   watched folder and display them (name collision = overwrite, i.e. update)
 - **Claude can see what you see** — the viewer writes the currently displayed
@@ -88,12 +93,13 @@ table to terminal scrollback.
   (`.pdf`, audio, video).
 - **Claude can drive the viewer** — a file-based control channel
   (`%LOCALAPPDATA%\ArtifactViewer\command.txt` → `command-result.txt`) with
-  six commands: `capture <png-path>` screenshots the current render (Claude
+  seven commands: `capture <png-path>` screenshots the current render (Claude
   can verify the chart it just wrote actually looks right), `show <file>`
   brings an artifact on screen, `scroll-to <heading>` jumps to a section,
   `pdf [pdf-path]` exports the current artifact (defaults to the same name
   beside the source; never prompts), `copy [file]` clipboards an artifact's
-  source, and `focus [file]` raises the window —
+  source, `share [--move] [file]` puts one in the
+  [team folder](#team-folder-optional), and `focus [file]` raises the window —
   optionally showing a file on the way — for when the viewer is behind your
   editor. Relaunching the exe won't do this: it starts a second instance,
   deliberately, so you can watch two folders at once.
@@ -335,6 +341,50 @@ reconstructed. Its companion
 [`warehouse-reports.sql`](docs/examples/fixtures/warehouse-reports.sql) is the
 all-procedures case that shows prefix stripping — one script can't demonstrate
 both, since the prefix common to every object in a mixed-kind script is nothing.
+
+### Team folder *(optional)*
+
+Point the viewer at a second folder that you and colleagues both sync — a
+Dropbox or OneDrive share, a network drive — and their artifacts show up in your
+viewer as they're written. There is no server, no account and no port here: it's
+a folder both machines already have, which is the same idea as the watch folder,
+pointed at someone else.
+
+Click **👥** in the toolbar to choose one (right-click to change it, or stop
+watching). Until you do, the button is greyed and nothing else changes — no
+extra row, no Share button, no second watcher.
+
+Once set:
+
+- **Team artifacts get their own row**, above yours, each tab marked with a ◆.
+  The row exists to keep their stream out of yours: a colleague writing a file
+  never pulls the view off what you're reading, and their artifacts don't turn up
+  in your ◀ ▶ history. Click a tab to read one; the arrows stay live so you can
+  get back.
+- **The badge travels with the file, not the row.** Pin a team artifact and it
+  moves to the pinned row still wearing its ◆ — the row says what kind of tab it
+  is, the badge says whose it is. It's a shape rather than only a colour, so it
+  still reads if you don't see the amber.
+- **🤝 Share** copies the current artifact into the team folder;
+  **right-click to move it** instead, for when it was only ever for them. Same
+  name overwrites, matching drag & drop — sharing a revised draft of the same
+  deliverable is the common case.
+- **Claude can share too**: `share [--move] [file]` through the control channel.
+  It copies unless told otherwise, because an assistant asked to share something
+  shouldn't quietly empty your own folder. `tabs.json` gains an `origin` field
+  (`mine` / `team`), so you can also tell it to leave team artifacts alone.
+
+A caveat worth stating plainly: a team folder is the first thing that puts files
+**other people wrote** into your viewer, and it's served as a browsable origin
+just like your own folder — so the note above about [trusted
+space](#the-watch-folder-is-trusted-space) applies to it, with the difference
+that you aren't the author. Share a folder with people you'd trust to hand you
+an HTML file.
+
+Sync clients also leave litter — conflicted copies, `.tmp` files, `.DS_Store`
+from a Mac — and those currently get tabs like anything else. An ignore list is
+the obvious next step; it isn't written yet, deliberately, because which junk
+actually appears depends on which sync client you use.
 
 ## Implementation notes
 

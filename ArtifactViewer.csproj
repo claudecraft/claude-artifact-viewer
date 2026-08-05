@@ -22,7 +22,7 @@
          release tag of vX.Y.Z needs this at X.Y.Z or up-to-date installs are
          told they're behind. The release workflow fails the build if they
          disagree. -->
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
   </PropertyGroup>
 
   <!-- Single-file release defaults, so `dotnet publish -c Release -r win-x64`

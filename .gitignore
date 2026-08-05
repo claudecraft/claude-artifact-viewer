@@ -3,5 +3,9 @@ obj/
 .vs/
 *.user
 
+# `dotnet publish -o publish` output — a 63 MB exe, one `git add -A` from
+# being committed. The README tells people to run exactly that command.
+publish/
+
 # private publishing notes — never commit
 PUBLISHING.md

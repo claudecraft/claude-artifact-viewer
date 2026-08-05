@@ -747,7 +747,7 @@ public partial class MainWindow : Window
     }
 
     // ---------- Control channel (Claude Code drives the viewer via command.txt) ----------
-    // Write "capture [png-path]" | "show <file>" | "scroll-to <heading-or-#id>" |
+    // Write "capture [png-path]" | "show <file>" | "scroll-to <heading|#id|line[-line]|text>" |
     // "pdf [pdf-path]" | "copy [file]" | "focus [file]" to
     // %LOCALAPPDATA%\ArtifactViewer\command.txt; the outcome lands in command-result.txt.
 
@@ -953,22 +953,138 @@ public partial class MainWindow : Window
 
     private async Task<string> CmdScrollTo(string arg)
     {
-        if (string.IsNullOrEmpty(arg)) throw new InvalidOperationException("scroll-to needs a heading or anchor id");
+        if (string.IsNullOrEmpty(arg)) throw new InvalidOperationException("scroll-to needs a heading, #anchor, line number, or text to find");
         if (!_webReady || _renderedPath is null) throw new InvalidOperationException("nothing rendered yet");
         var query = JsonSerializer.Serialize(arg.TrimStart('#'));
         var result = await Web.CoreWebView2.ExecuteScriptAsync($$"""
             (() => {
-              const q = {{query}}.toLowerCase();
+              const raw = {{query}};
+              const q = raw.toLowerCase();
+              const FLASH_MS = 2600, FADE_MS = 1300;
+
+              if (!document.getElementById('av-scroll-style')) {
+                const st = document.createElement('style');
+                st.id = 'av-scroll-style';
+                st.textContent =
+                  '::highlight(av-scroll) { background-color: rgba(232,179,57,.32); }' +
+                  '.av-flash { outline: 2px solid rgba(232,179,57,.9); outline-offset: 3px; border-radius: 3px; transition: outline-color 1.2s ease; }' +
+                  '.av-flash-fade { outline-color: transparent; }';
+                document.head.appendChild(st);
+              }
+              const flashEl = el => {
+                el.classList.add('av-flash');
+                setTimeout(() => el.classList.add('av-flash-fade'), FLASH_MS);
+                setTimeout(() => el.classList.remove('av-flash', 'av-flash-fade'), FLASH_MS + FADE_MS);
+              };
+              const flashRange = r => {
+                // Custom Highlight API paints the range without touching the DOM;
+                // if this Chromium somehow lacks it, flash the containing element instead.
+                if (window.Highlight && CSS.highlights) {
+                  CSS.highlights.set('av-scroll', new Highlight(r));
+                  setTimeout(() => CSS.highlights.delete('av-scroll'), FLASH_MS + FADE_MS);
+                } else if (r.startContainer.parentElement) {
+                  flashEl(r.startContainer.parentElement);
+                }
+              };
+
+              // 1+2: anchor id, then heading substring — the original contract
               const all = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,[id]')];
-              const el = all.find(e => (e.id || '').toLowerCase() === q)
-                      || all.find(e => /^H[1-6]$/.test(e.tagName) && e.textContent.trim().toLowerCase().includes(q));
-              if (!el) return 'not-found';
-              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              return 'ok';
+              let el = all.find(e => (e.id || '').toLowerCase() === q);
+              let kind = el ? 'anchor' : '';
+              if (!el) {
+                el = all.find(e => /^H[1-6]$/.test(e.tagName) && e.textContent.trim().toLowerCase().includes(q));
+                kind = el ? 'heading' : '';
+              }
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                flashEl(el);
+                return kind;
+              }
+
+              // Flatten rendered text, remembering which node covers which span.
+              // Block boundaries become synthetic newlines so text can't false-match
+              // across blocks and "the line containing the match" means the block.
+              const BLOCK = /^(ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|BR|DD|DETAILS|DIV|DL|DT|FIGCAPTION|FIGURE|FOOTER|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|SUMMARY|TABLE|TD|TH|TR|UL)$/;
+              const mapText = root => {
+                const t = { nodes: [], full: '' };
+                const walk = node => {
+                  for (const c of node.childNodes) {
+                    if (c.nodeType === Node.TEXT_NODE) {
+                      t.nodes.push({ n: c, start: t.full.length });
+                      t.full += c.nodeValue;
+                    } else if (c.nodeType === Node.ELEMENT_NODE && !/^(SCRIPT|STYLE|NOSCRIPT)$/.test(c.tagName)) {
+                      walk(c);
+                      if (BLOCK.test(c.tagName) && !t.full.endsWith('\n')) t.full += '\n';
+                    }
+                  }
+                };
+                walk(root);
+                return t;
+              };
+
+              const rangeFor = (t, s, e) => {
+                const r = document.createRange();
+                let startSet = false;
+                for (const { n, start } of t.nodes) {
+                  const end = start + n.nodeValue.length;
+                  if (!startSet) {
+                    if (end <= s) continue;
+                    r.setStart(n, Math.max(0, s - start));
+                    startSet = true;
+                  }
+                  if (start >= e) break;
+                  r.setEnd(n, Math.min(n.nodeValue.length, Math.max(0, e - start)));
+                }
+                return startSet ? r : null;
+              };
+              const goTo = r => {
+                // Not scrollIntoView: the range's parent element can be the whole
+                // <code> block, which would scroll to the top of the file.
+                const rect = r.getBoundingClientRect();
+                window.scrollTo({ top: window.scrollY + rect.top - Math.max(60, window.innerHeight / 3), behavior: 'smooth' });
+                flashRange(r);
+              };
+
+              // 3: "355" or "355-367" on a code/log artifact = source line numbers.
+              // Line offsets come from the code element's own subtree — the body has
+              // stray whitespace nodes around <pre> that would shift every line by one.
+              const m = raw.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+              const codes = document.querySelectorAll('body > pre > code');
+              if (m && codes.length === 1) {
+                let a = +m[1], b = m[2] ? +m[2] : a;
+                if (a > b) { const sw = a; a = b; b = sw; }
+                const ct = mapText(codes[0]);
+                const starts = [0];
+                for (let i = 0; i < ct.full.length; i++) if (ct.full.charCodeAt(i) === 10) starts.push(i + 1);
+                if (a <= starts.length) {
+                  const s = starts[a - 1];
+                  const e = b < starts.length ? starts[b] - 1 : ct.full.length;
+                  const r = rangeFor(ct, s, Math.max(e, s + 1));
+                  if (r) { goTo(r); return 'lines'; }
+                }
+              }
+
+              // 4: plain text — first case-insensitive match, highlight its whole line/block
+              const bt = mapText(document.body);
+              const idx = bt.full.toLowerCase().indexOf(q);
+              if (idx >= 0) {
+                const ls = bt.full.lastIndexOf('\n', idx) + 1;
+                let le = bt.full.indexOf('\n', idx + q.length);
+                if (le < 0) le = bt.full.length;
+                const r = rangeFor(bt, ls, le);
+                if (r) { goTo(r); return 'text'; }
+              }
+              return 'not-found';
             })()
             """);
-        if (result.Contains("not-found")) throw new InvalidOperationException($"no heading or anchor matching '{arg}'");
-        return $"scrolled to '{arg}'";
+        return result.Trim('"') switch
+        {
+            "anchor" => $"scrolled to anchor '{arg}'",
+            "heading" => $"scrolled to heading '{arg}'",
+            "lines" => $"scrolled to line(s) {arg}",
+            "text" => $"scrolled to first match of '{arg}'",
+            _ => throw new InvalidOperationException($"nothing matching '{arg}' — no heading, anchor, line number, or text hit")
+        };
     }
 
     // ---------- PDF export ----------

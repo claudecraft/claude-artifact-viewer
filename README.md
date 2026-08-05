@@ -95,7 +95,9 @@ table to terminal scrollback.
   (`%LOCALAPPDATA%\ArtifactViewer\command.txt` → `command-result.txt`) with
   seven commands: `capture <png-path>` screenshots the current render (Claude
   can verify the chart it just wrote actually looks right), `show <file>`
-  brings an artifact on screen, `scroll-to <heading>` jumps to a section,
+  brings an artifact on screen, `scroll-to <heading|line|text>` jumps to a
+  section, a source line range, or the first text match — and flash-highlights
+  what it landed on,
   `pdf [pdf-path]` exports the current artifact (defaults to the same name
   beside the source; never prompts), `copy [file]` clipboards an artifact's
   source, `share [--move] [file]` puts one in the

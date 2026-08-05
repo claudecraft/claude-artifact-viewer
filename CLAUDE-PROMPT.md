@@ -82,8 +82,11 @@ ok/error, detail). Commands:
   layout you just wrote actually renders correctly.
 - `show <file>` — bring an artifact on screen (bare filename resolves in the
   watch folder; reopens a closed tab). Use when telling the user "see <file>".
-- `scroll-to <heading-or-#id>` — scroll the current artifact to a heading
-  (case-insensitive substring) or anchor id. Use with "look at section X".
+- `scroll-to <heading | #id | line[-line] | text>` — scroll the current artifact
+  to a heading (case-insensitive substring), an anchor id, a source line or line
+  range on code/log artifacts (`scroll-to 355-367`), or the first text match
+  anywhere in the render. Whatever it lands on gets a briefly flashed highlight.
+  Use with "look at section X" / "focus on Y".
 - `pdf [pdf-path]` — export the currently rendered artifact to PDF, defaulting
   to the same name beside the source. Use when I ask for a PDF, or for something
   to send/share. Prints the live render through a print stylesheet (light page,

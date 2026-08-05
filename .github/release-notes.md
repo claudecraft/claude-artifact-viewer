@@ -1,11 +1,18 @@
-## New in 1.5.0
+## New in 1.6.0
 
-`scroll-to` (the control-channel command) now navigates every kind of artifact,
-not just ones with headings. It falls through: heading substring, `#anchor`,
-source line or range (`scroll-to 355-367`) on code/log artifacts, then the first
-text match anywhere in the render. Whatever it lands on gets a briefly flashed
-highlight, so your eye goes where the scroll went — ask Claude to "focus on the
-DeleteSavedFilerList method" and the method lights up.
+**The app updates itself now.** The new-version banner has an **Update now**
+button: it downloads the release, verifies it against the published SHA-256,
+swaps the exe in place and restarts. Settings, tabs and taskbar pins all
+survive — the file's path never changes — and because the app fetches the
+download itself, there's no SmartScreen warning. If the download doesn't
+verify or the swap can't work (say the exe sits somewhere unwritable), it
+falls back to the manual route below. The update *check* now runs at each
+launch instead of daily; it still sends nothing but a User-Agent, and
+`"checkForUpdates": "false"` in `settings.json` still turns it off.
+
+One catch, just this once: the version you're *running* needs the button, so
+updating **to** 1.6.0 is still the manual replace described below. From the
+next release on, it's one click.
 
 ## Download
 
@@ -28,8 +35,11 @@ GitHub runner, or you can clone and `dotnet run` yourself.
 
 ### Already running an older version?
 
-This download is a **separate copy** of the program, so there's one step the
-browser won't do for you: put it where the old one lives.
+**On 1.6.0 or later?** Click **Update now** in the banner and you're done —
+everything below is handled for you.
+
+On 1.5.0 or earlier, this download is a **separate copy** of the program, so
+there's one step the browser won't do for you: put it where the old one lives.
 
 1. In Artifact Viewer, the update notice has a **Show current file** button — it
    opens the folder containing the version you're running, with the file
